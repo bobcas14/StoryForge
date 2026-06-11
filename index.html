@@ -710,6 +710,10 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
                     defaultValue={line.text}
                     placeholder={placeholder(line.mode)}
                     rows={1}
+                    spellCheck={true}
+                    autoCorrect="on"
+                    autoCapitalize="sentences"
+                    autoComplete="off"
                     onFocus={() => { setCurLine(idx); showPill(refs.current[idx]); updateCounter(idx); }}
                     onChange={e => { autoGrow(e.target); const w = wrapperRefs.current[idx]; if (w) lineHeights.current[idx] = w.offsetHeight; handleChange(e, idx); }}
                     onKeyDown={e => handleKeyDown(e, idx)}
@@ -797,15 +801,18 @@ function AIPanel({ project, cast, onClose }) {
 
   const run = async (sys, usr) => {
     setLoading(true); setResponse("");
+    // Use /api/chat proxy on Vercel, direct Anthropic endpoint in Claude artifact
+    const isArtifact = window.location.hostname.includes("claude.ai") || window.location.hostname === "localhost" || window.location.protocol === "blob:";
+    const url = isArtifact ? "https://api.anthropic.com/v1/messages" : "/api/chat";
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
+      const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1000, system: sys, messages: [{ role: "user", content: usr }] }),
       });
       const d = await res.json();
       setResponse(d.content?.filter(b => b.type === "text").map(b => b.text).join("") || "No response.");
-    } catch { setResponse("Connection error."); }
+    } catch (err) { setResponse("Connection error. Check your API key in Vercel environment settings."); }
     setLoading(false);
   };
 
@@ -1391,8 +1398,8 @@ function Landing({ onStart, hasProfile }) {
   const goSection = (s) => setSection(s);
 
   const NavBar = () => (
-    <div style={{ padding: "20px 64px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid #F0F0F0", position: "sticky", top: 0, background: "#FFF", zIndex: 100 }}>
-      <button onClick={() => goSection("home")} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, margin: 0 }}>
+    <div style={{ padding: "20px 64px 20px 48px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid #F0F0F0", position: "sticky", top: 0, background: "#FFF", zIndex: 100 }}>
+      <button onClick={() => goSection("home")} style={{ background: "none", border: "none", cursor: "pointer", padding: "0 48px 0 0", margin: 0 }}>
         <p style={{ margin: 0, fontSize: 11, fontWeight: 900, letterSpacing: "0.25em", textTransform: "uppercase", color: "#000" }}>STORYFORGE</p>
       </button>
       <div style={{ display: "flex", gap: 32, alignItems: "center" }}>
@@ -1932,7 +1939,9 @@ function MoodBoard({ project, onUpdateCards, onClose }) {
     if (!prompt.trim()) return;
     setLoading(true); setError("");
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
+      const _isArtifact = window.location.hostname.includes("claude.ai") || window.location.protocol === "blob:";
+      const _apiUrl = _isArtifact ? "https://api.anthropic.com/v1/messages" : "/api/chat";
+      const res = await fetch(_apiUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2051,7 +2060,9 @@ function ImportModal({ profile, onImport, onClose }) {
     setLoading(true); setError("");
     const fmt_label = FORMATS.find(f => f.id === fmt)?.label || "Script";
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
+      const _isArtifact = window.location.hostname.includes("claude.ai") || window.location.protocol === "blob:";
+      const _apiUrl = _isArtifact ? "https://api.anthropic.com/v1/messages" : "/api/chat";
+      const res = await fetch(_apiUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
