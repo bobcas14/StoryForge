@@ -306,6 +306,7 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
   const [pillPos, setPillPos]   = useState({ x: 0, y: 0 });
   const [popup, setPopup]       = useState({ visible: false, x: 0, y: 0, query: "", matches: [] });
   const [contextMenu, setContextMenu] = useState(null);
+  const [inlineNote, setInlineNote] = useState(null); // { x, y, lineIdx, meta }
 
   // refs[idx] → the <textarea> DOM node
   const refs     = useRef({});
@@ -418,6 +419,22 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
     const lineMode = lines[idx]?.mode;
 
     // ── pass through all Ctrl/Cmd combos except ones we own ──
+    if ((e.ctrlKey || e.metaKey) && e.key === "a") {
+      e.preventDefault();
+      const el = refs.current[idx];
+      if (el) { el.focus(); el.select(); }
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === "n") {
+      e.preventDefault();
+      const el = refs.current[idx];
+      if (el) {
+        const r = el.getBoundingClientRect();
+        const meta = { page: pageMap.lineToPage[idx] || 1, character: lines[idx]?.mode === "character" ? (textCache.current[idx] || "") : "", mode: lines[idx]?.mode };
+        setInlineNote({ x: r.left + 40, y: r.bottom + 8, lineIdx: idx, meta });
+      }
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && e.key !== "k") return;
 
     // ── pass through Shift combos (native selection) ──
@@ -549,6 +566,15 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
     setContextMenu(null);
   };
 
+  // ── save inline note ──
+  const saveInlineNote = (text) => {
+    if (!inlineNote) return;
+    const { lineIdx, meta } = inlineNote;
+    const note = { id: Date.now(), text, lineIdx, meta, created: Date.now() };
+    setLines(prev => prev.map((l, i) => i === lineIdx ? { ...l, notes: [...(l.notes || []), note] } : l));
+    setInlineNote(null);
+  };
+
   // ── placeholder text per mode ──
   const placeholder = (mode) => ({
     character: "CHARACTER NAME",
@@ -626,6 +652,10 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
                   </div>
                 )}
                 {/* Line wrapper — wrapperStyle provides screenplay indentation */}
+                <div style={{ position: "relative" }}>
+                {line.notes?.length > 0 && (
+                  <span style={{ position: "absolute", left: -20, top: 4, fontSize: 9, color: "#AAA", fontWeight: 700, cursor: "default", userSelect: "none" }} title={line.notes.map(n => n.text).join(" / ")}>¹</span>
+                )}
                 <div
                   ref={el => { wrapperRefs.current[idx] = el; if (el && el.offsetHeight > 0) lineHeights.current[idx] = el.offsetHeight; }}
                   style={{ position: "relative", ...wrapperStyle(line.mode, format) }}
@@ -644,6 +674,7 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
                     onContextMenu={e => handleContextMenu(e, idx)}
                     style={taStyle(line.mode)}
                   />
+                </div>
                 </div>
               </div>
             );
@@ -672,6 +703,27 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
           selectedText={contextMenu.text}
           onAddToCase={addToCastFromContext}
           onClose={() => setContextMenu(null)}
+        />
+      )}
+
+      {/* Inline note popup */}
+      {inlineNote && (
+        <InlineNotePopup
+          x={inlineNote.x} y={inlineNote.y}
+          meta={inlineNote.meta}
+          onSave={saveInlineNote}
+          onClose={() => setInlineNote(null)}
+        />
+      )}
+
+
+      {/* Inline note popup */}
+      {inlineNote && (
+        <InlineNotePopup
+          x={inlineNote.x} y={inlineNote.y}
+          meta={inlineNote.meta}
+          onSave={saveInlineNote}
+          onClose={() => setInlineNote(null)}
         />
       )}
 
@@ -931,10 +983,32 @@ function CastPanel({ cast, onUpdate, onAdd, onClose }) {
                   : <span style={{ fontSize: 10, fontWeight: 700, color: "#AAA" }}>{c.name?.[0]?.toUpperCase() || "?"}</span>
                 }
               </div>
-              <div style={{ overflow: "hidden" }}>
+              <div style={{ overflow: "hidden", flex: 1 }}>
                 <p style={{ margin: 0, fontSize: 12, fontWeight: i === sel ? 700 : 500, color: i === sel ? "#000" : "#666", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</p>
                 <p style={{ margin: "2px 0 0", fontSize: 10, color: "#AAA" }}>{c.role}</p>
               </div>
+              {c.image && (
+                <div style={{ position: "relative", flexShrink: 0 }}
+                  onMouseEnter={e => {
+                    const dot = e.currentTarget;
+                    const r = dot.getBoundingClientRect();
+                    dot.querySelector(".photo-popup").style.display = "block";
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.querySelector(".photo-popup").style.display = "none";
+                  }}
+                >
+                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#000", display: "inline-block", opacity: 0.25, cursor: "pointer" }} />
+                  <div className="photo-popup" style={{
+                    display: "none", position: "fixed", zIndex: 900,
+                    width: 120, height: 120, borderRadius: 6, overflow: "hidden",
+                    border: "1px solid #D0D0D0", boxShadow: "0 4px 16px rgba(0,0,0,0.15)",
+                    transform: "translateX(-130px) translateY(-50px)",
+                  }}>
+                    <img src={c.image} alt={c.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  </div>
+                </div>
+              )}
             </button>
           ))}
         </div>
@@ -1569,16 +1643,80 @@ function Landing({ onStart, hasProfile }) {
 
 // ─── ROOT ─────────────────────────────────────────────────────────────────────
 function Root() {
-  const [screen, setScreen] = useState("landing");
+  const [screen, setScreen] = useState("landing"); // landing | auth | setup | dashboard | app
   const [profile, setProfile] = useState(() => LS.get("sf_profile", null));
+  const [user, setUser] = useState(() => LS.get("sf_current_user", null));
+  const [dashProjects, setDashProjects] = useState([]);
+  const [dashSave, setDashSave] = useState(null);
+  const [activeProject, setActiveProject] = useState(null);
 
-  const enter = () => setScreen(profile ? "app" : "setup");
-  const save = (p) => { setProfile(p); LS.set("sf_profile", p); setScreen("app"); };
+  const enter = () => {
+    if (!user) { setScreen("auth"); return; }
+    const ps = LS.get(`sf_projects_${user.email}`, []);
+    if (ps.length === 1) { openProject(ps[0], (updated) => { LS.set(`sf_projects_${user.email}`, updated); setDashProjects(updated); }, ps); return; }
+    setScreen("dashboard");
+  };
+  const save = (p) => { setProfile(p); LS.set("sf_profile", p); setScreen(profile ? "dashboard" : "dashboard"); };
   const goHome = () => setScreen("landing");
 
+  const handleAuth = (u) => {
+    setUser(u);
+    LS.set("sf_current_user", u);
+    if (!profile) { setScreen("setup"); return; }
+    setScreen("dashboard");
+  };
+  const signOut = () => {
+    LS.set("sf_current_user", null);
+    setUser(null);
+    setActiveProject(null);
+    setScreen("landing");
+  };
+
+  const openProject = (p, saveFn, allProjects) => {
+    setActiveProject(p);
+    setDashSave(() => saveFn);
+    setDashProjects(allProjects);
+    setScreen("app");
+  };
+
+  const newProject = (saveFn, allProjects) => {
+    if (!profile) return;
+    const p = { id: Date.now(), title: "Untitled", format: profile.format, genre: profile.genre, lines: [], cast: [], notes: "", moodCards: [], created: Date.now() };
+    const updated = [p, ...allProjects];
+    saveFn(updated);
+    setActiveProject(p);
+    setDashSave(() => saveFn);
+    setDashProjects(updated);
+    setScreen("app");
+  };
+
   if (screen === "landing") return <Landing onStart={enter} hasProfile={!!profile} />;
+  if (screen === "auth")    return <AuthScreen onAuth={handleAuth} />;
   if (screen === "setup")   return <Setup existing={profile} onSave={save} />;
-  return <App profile={profile} onEditProfile={() => setScreen("setup")} onHome={goHome} />;
+  if (screen === "dashboard" && user) {
+    const projectsKey = `sf_projects_${user.email}`;
+    return <Dashboard
+      user={user}
+      onOpen={openProject}
+      onNew={newProject}
+      onSignOut={signOut}
+    />;
+  }
+  return <App
+    profile={profile || { name: user?.name || "", format: "film", genre: "Dark Fantasy", genres: [], styles: [] }}
+    onEditProfile={() => setScreen("setup")}
+    onHome={() => setScreen("dashboard")}
+    initialProject={activeProject}
+    onSaveProject={(updated) => {
+      if (!user || !dashSave) return;
+      const allProjects = LS.get(`sf_projects_${user.email}`, []);
+      const newAll = allProjects.map(p => p.id === updated.id ? updated : p);
+      if (!newAll.find(p => p.id === updated.id)) newAll.unshift(updated);
+      LS.set(`sf_projects_${user.email}`, newAll);
+      setDashProjects(newAll);
+    }}
+    onBackToDash={() => setScreen("dashboard")}
+  />;
 }
 function Setup({ existing, onSave }) {
   const [step, setStep] = useState(0);
@@ -1973,6 +2111,221 @@ ${raw.slice(0, 8000)}` }],
   );
 }
 
+
+// ─── NOTES PANEL (Feature 4) ─────────────────────────────────────────────────
+function NotesPanel({ notes, onChange }) {
+  const [full, setFull] = useState(false);
+
+  const style = full ? {
+    position: "fixed", inset: 0, zIndex: 800, background: "#FFF",
+    display: "flex", flexDirection: "column",
+  } : {
+    width: 300, minWidth: 300, borderLeft: "1px solid #EBEBEB",
+    display: "flex", flexDirection: "column", background: "#FFF", flexShrink: 0,
+  };
+
+  return (
+    <div style={style}>
+      <div style={{ padding: "12px 16px", borderBottom: "1px solid #EBEBEB", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+        <span style={{ fontSize: 10, fontWeight: 800, color: "#AAA", letterSpacing: "0.12em", textTransform: "uppercase" }}>Notes</span>
+        <button onClick={() => setFull(f => !f)} title={full ? "Collapse" : "Fullscreen"} style={{ background: "none", border: "none", cursor: "pointer", color: "#BBB", fontSize: 14, lineHeight: 1, padding: 2, fontFamily: "inherit" }}>
+          {full ? "⊡" : "⛶"}
+        </button>
+      </div>
+      <textarea
+        value={notes}
+        onChange={e => onChange(e.target.value)}
+        placeholder={"Lore rules, story notes, continuity tracking..."}
+        style={{ flex: 1, background: "#FFF", border: "none", color: "#333", padding: full ? "48px 80px" : "16px", fontSize: full ? 14 : 12, lineHeight: 1.8, fontFamily: "-apple-system,'Segoe UI',sans-serif", resize: "none", outline: "none" }}
+      />
+    </div>
+  );
+}
+
+// ─── INLINE NOTE SYSTEM (Feature 5) ──────────────────────────────────────────
+function InlineNotePopup({ x, y, meta, onSave, onClose }) {
+  const [text, setText] = useState("");
+  const inputRef = useRef(null);
+  useEffect(() => { setTimeout(() => inputRef.current?.focus(), 0); }, []);
+  return (
+    <div style={{
+      position: "fixed", left: Math.min(x, window.innerWidth - 320), top: Math.max(y - 20, 60),
+      width: 300, background: "#FFF", border: "1px solid #D0D0D0",
+      borderRadius: 6, boxShadow: "0 4px 20px rgba(0,0,0,0.12)", zIndex: 1500, overflow: "hidden",
+    }}>
+      <div style={{ padding: "8px 12px", borderBottom: "1px solid #F0F0F0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ fontSize: 10, color: "#AAA", fontWeight: 600 }}>
+          p.{meta.page}{meta.character ? ` · ${meta.character}` : ""}{meta.mode ? ` · ${meta.mode}` : ""}
+        </span>
+        <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "#CCC", fontSize: 14 }}>×</button>
+      </div>
+      <textarea
+        ref={inputRef}
+        value={text}
+        onChange={e => setText(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (text.trim()) onSave(text.trim()); }
+          if (e.key === "Escape") onClose();
+        }}
+        placeholder="Note..."
+        style={{ width: "100%", border: "none", outline: "none", resize: "none", padding: "10px 12px", fontSize: 12, lineHeight: 1.6, fontFamily: "inherit", boxSizing: "border-box", minHeight: 72, background: "#FAFAFA" }}
+      />
+      <div style={{ padding: "6px 12px", borderTop: "1px solid #F0F0F0", display: "flex", justifyContent: "flex-end", gap: 8 }}>
+        <button onClick={onClose} style={{ background: "none", border: "none", color: "#AAA", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+        <button onClick={() => { if (text.trim()) onSave(text.trim()); }} style={{ background: "#000", color: "#FFF", border: "none", borderRadius: 3, padding: "4px 12px", fontSize: 11, cursor: "pointer", fontFamily: "inherit", fontWeight: 700 }}>Save ↵</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── AUTH SCREEN (Feature 6) ──────────────────────────────────────────────────
+function AuthScreen({ onAuth }) {
+  const [mode, setMode] = useState("signin"); // signin | signup
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [pass, setPass] = useState("");
+  const [err, setErr] = useState("");
+
+  const submit = () => {
+    setErr("");
+    if (!email.trim() || !pass.trim()) { setErr("Email and password required."); return; }
+    const key = `sf_user_${email.trim().toLowerCase()}`;
+    if (mode === "signup") {
+      if (!name.trim()) { setErr("Name required."); return; }
+      if (LS.get(key, null)) { setErr("Account already exists. Sign in instead."); return; }
+      const user = { name: name.trim(), email: email.trim().toLowerCase(), pass };
+      LS.set(key, user);
+      onAuth(user);
+    } else {
+      const user = LS.get(key, null);
+      if (!user) { setErr("No account found. Sign up instead."); return; }
+      if (user.pass !== pass) { setErr("Incorrect password."); return; }
+      onAuth(user);
+    }
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#FFF", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+      <p style={{ margin: "0 0 40px", fontSize: 11, fontWeight: 900, letterSpacing: "0.25em", textTransform: "uppercase", color: "#000" }}>STORYFORGE</p>
+      <div style={{ width: 360, border: "1px solid #E8E8E8", borderRadius: 8, padding: "40px 36px" }}>
+        <h2 style={{ margin: "0 0 28px", fontSize: 22, fontWeight: 900, color: "#000", letterSpacing: "-0.02em" }}>
+          {mode === "signin" ? "Sign in" : "Create account"}
+        </h2>
+        {mode === "signup" && (
+          <div style={{ marginBottom: 14 }}>
+            <label style={css.label}>Name</label>
+            <input value={name} onChange={e => setName(e.target.value)} placeholder="B. Hill" style={css.input}
+              onKeyDown={e => e.key === "Enter" && submit()} />
+          </div>
+        )}
+        <div style={{ marginBottom: 14 }}>
+          <label style={css.label}>Email</label>
+          <input value={email} onChange={e => setEmail(e.target.value)} placeholder="you@email.com" style={css.input}
+            onKeyDown={e => e.key === "Enter" && submit()} />
+        </div>
+        <div style={{ marginBottom: 20 }}>
+          <label style={css.label}>Password</label>
+          <input type="password" value={pass} onChange={e => setPass(e.target.value)} placeholder="••••••••" style={css.input}
+            onKeyDown={e => e.key === "Enter" && submit()} />
+        </div>
+        {err && <p style={{ margin: "0 0 14px", fontSize: 12, color: "#888" }}>{err}</p>}
+        <button onClick={submit} style={{ width: "100%", padding: "11px", background: "#000", color: "#FFF", border: "none", borderRadius: 4, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 14 }}>
+          {mode === "signin" ? "Sign in" : "Create account"}
+        </button>
+        <p style={{ margin: "16px 0 0", fontSize: 12, color: "#AAA", textAlign: "center" }}>
+          {mode === "signin" ? "No account? " : "Have an account? "}
+          <button onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setErr(""); }}
+            style={{ background: "none", border: "none", cursor: "pointer", color: "#000", fontWeight: 700, fontSize: 12, fontFamily: "inherit", padding: 0 }}>
+            {mode === "signin" ? "Sign up" : "Sign in"}
+          </button>
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ─── PROJECT DASHBOARD (Feature 6) ───────────────────────────────────────────
+function Dashboard({ user, onOpen, onNew, onSignOut }) {
+  const projectsKey = `sf_projects_${user.email}`;
+  const [projects, setProjects] = useState(() => LS.get(projectsKey, []));
+
+  const save = (ps) => { setProjects(ps); LS.set(projectsKey, ps); };
+
+  const deleteProject = (id) => save(projects.filter(p => p.id !== id));
+  const duplicateProject = (p) => {
+    const copy = { ...p, id: Date.now(), title: p.title + " (copy)", created: Date.now() };
+    save([copy, ...projects]);
+  };
+  const renameProject = (id, title) => save(projects.map(p => p.id === id ? { ...p, title } : p));
+
+  const [renaming, setRenaming] = useState(null);
+  const [renameVal, setRenameVal] = useState("");
+
+  const fmt = (id) => FORMATS.find(f => f.id === id)?.label || id;
+  const ago = (ts) => {
+    const d = Math.floor((Date.now() - ts) / 86400000);
+    return d === 0 ? "Today" : d === 1 ? "Yesterday" : `${d}d ago`;
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#FFF", display: "flex", flexDirection: "column" }}>
+      {/* Header */}
+      <div style={{ padding: "20px 48px", borderBottom: "1px solid #EBEBEB", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <p style={{ margin: 0, fontSize: 11, fontWeight: 900, letterSpacing: "0.25em", textTransform: "uppercase", color: "#000" }}>STORYFORGE</p>
+        <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+          <span style={{ fontSize: 12, color: "#AAA" }}>{user.name}</span>
+          <button onClick={onSignOut} style={{ background: "none", border: "1px solid #E8E8E8", borderRadius: 4, padding: "6px 14px", fontSize: 12, cursor: "pointer", fontFamily: "inherit", color: "#666" }}>Sign out</button>
+        </div>
+      </div>
+      {/* Content */}
+      <div style={{ flex: 1, padding: "48px", maxWidth: 1000, margin: "0 auto", width: "100%", boxSizing: "border-box" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 32 }}>
+          <h2 style={{ margin: 0, fontSize: 26, fontWeight: 900, color: "#000", letterSpacing: "-0.02em" }}>Your Projects</h2>
+          <button onClick={() => onNew(save, projects)} style={{ padding: "9px 20px", background: "#000", color: "#FFF", border: "none", borderRadius: 4, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 13 }}>+ New Project</button>
+        </div>
+        {projects.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "80px 0", color: "#CCC" }}>
+            <p style={{ fontSize: 14, margin: "0 0 20px" }}>No projects yet.</p>
+            <button onClick={() => onNew(save, projects)} style={{ padding: "10px 24px", background: "#000", color: "#FFF", border: "none", borderRadius: 4, cursor: "pointer", fontFamily: "inherit", fontWeight: 700 }}>Create your first project</button>
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>
+            {projects.map(p => (
+              <div key={p.id} style={{ border: "1px solid #EBEBEB", borderRadius: 8, padding: "20px", cursor: "pointer", transition: "border-color 0.12s", position: "relative" }}
+                onMouseEnter={e => e.currentTarget.style.borderColor = "#000"}
+                onMouseLeave={e => e.currentTarget.style.borderColor = "#EBEBEB"}
+                onClick={() => onOpen(p, save, projects)}
+              >
+                {renaming === p.id ? (
+                  <input value={renameVal} onChange={e => setRenameVal(e.target.value)} autoFocus
+                    onKeyDown={e => { if (e.key === "Enter") { renameProject(p.id, renameVal); setRenaming(null); } if (e.key === "Escape") setRenaming(null); }}
+                    onBlur={() => { renameProject(p.id, renameVal); setRenaming(null); }}
+                    onClick={e => e.stopPropagation()}
+                    style={{ ...css.input, fontSize: 15, fontWeight: 700, padding: "4px 0", marginBottom: 8 }} />
+                ) : (
+                  <p style={{ margin: "0 0 6px", fontSize: 15, fontWeight: 700, color: "#000", lineHeight: 1.3 }}>{p.title}</p>
+                )}
+                <p style={{ margin: "0 0 14px", fontSize: 11, color: "#AAA" }}>{fmt(p.format)} · {p.genre}</p>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: 10, color: "#CCC" }}>{ago(p.created)}</span>
+                  <div style={{ display: "flex", gap: 4 }} onClick={e => e.stopPropagation()}>
+                    <button onClick={() => { setRenaming(p.id); setRenameVal(p.title); }}
+                      style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11, color: "#AAA", padding: "2px 6px", fontFamily: "inherit" }}>Rename</button>
+                    <button onClick={() => duplicateProject(p)}
+                      style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11, color: "#AAA", padding: "2px 6px", fontFamily: "inherit" }}>Dup</button>
+                    <button onClick={() => { if (window.confirm("Delete this project?")) deleteProject(p.id); }}
+                      style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11, color: "#AAA", padding: "2px 6px", fontFamily: "inherit" }}>Del</button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── APP SHELL ────────────────────────────────────────────────────────────────
 const NAV_ITEMS = [
   { id: "write",   icon: "✍", label: "Write"       },
@@ -1982,10 +2335,10 @@ const NAV_ITEMS = [
   { id: "profile", icon: "◎", label: "Profile"     },
 ];
 
-function App({ profile, onEditProfile, onHome }) {
+function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, onBackToDash }) {
   const [nav, setNav] = useState("write");
-  const [projects, setProjects] = useState(() => LS.get("sf_projects", []));
-  const [activeId, setActiveId] = useState(null);
+  const [projects, setProjects] = useState(() => initialProject ? [initialProject] : LS.get("sf_projects", []));
+  const [activeId, setActiveId] = useState(() => initialProject?.id || null);
   const [aiOpen, setAiOpen] = useState(false);
   const [castOpen, setCastOpen] = useState(false);
   const [hoveredNav, setHoveredNav] = useState(null);
@@ -1994,7 +2347,10 @@ function App({ profile, onEditProfile, onHome }) {
 
   const active = projects.find(p => p.id === activeId) || projects[0] || null;
 
-  useEffect(() => { LS.set("sf_projects", projects); }, [projects]);
+  useEffect(() => {
+    if (onSaveProject && active) onSaveProject(active);
+    else LS.set("sf_projects", projects);
+  }, [projects]);
 
   useEffect(() => {
     const handler = (e) => {
@@ -2051,7 +2407,7 @@ function App({ profile, onEditProfile, onHome }) {
         <div style={{ marginBottom: 20, paddingBottom: 16, borderBottom: "1px solid #EBEBEB", width: "100%", display: "flex", justifyContent: "center" }}
           onMouseEnter={() => setHoveredNav("home")} onMouseLeave={() => setHoveredNav(null)}
           style={{ position: "relative", marginBottom: 20, paddingBottom: 16, borderBottom: "1px solid #EBEBEB", width: "100%", display: "flex", justifyContent: "center" }}>
-          <button onClick={onHome} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }} title="Home">
+          <button onClick={onBackToDash || onHome} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }} title="Projects">
             <p style={{ margin: 0, fontSize: 10, fontWeight: 900, color: "#000", letterSpacing: "0.1em", writingMode: "vertical-lr", textOrientation: "mixed", transform: "rotate(180deg)" }}>SF</p>
           </button>
           {hoveredNav === "home" && (
@@ -2169,9 +2525,10 @@ function App({ profile, onEditProfile, onHome }) {
           )}
 
           {nav === "notes" && (
-            <textarea value={active?.notes || ""} onChange={e => updateNotes(e.target.value)}
-              placeholder="Lore rules, story notes, continuity tracking, world-building..."
-              style={{ flex: 1, background: "#FFF", border: "none", color: "#333", padding: "48px 80px", fontSize: 14, lineHeight: 1.9, fontFamily: "-apple-system,'Segoe UI',sans-serif", resize: "none", outline: "none" }} />
+            <NotesPanel
+              notes={active?.notes || ""}
+              onChange={updateNotes}
+            />
           )}
 
           {nav === "mood" && active && (
