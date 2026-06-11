@@ -297,7 +297,7 @@ function ContextMenu({ x, y, selectedText, onAddToCase, onClose }) {
 // ─── SMART EDITOR ─────────────────────────────────────────────────────────────
 // Uses textarea-per-line. React only owns mode + line structure.
 // Text value is owned entirely by the DOM (uncontrolled) — cursor never jumps.
-function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, onPageChange }) {
+function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, onPageChange, focusMode, scrollRef }) {
   const [lines, setLines] = useState(() =>
     project?.lines?.length ? project.lines : [{ id: Date.now(), text: "", mode: "action" }]
   );
@@ -357,6 +357,42 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
     setCurLine(0);
     lineHeights.current = {};
   }, [project?.id]);
+
+  // ── expose scroll-to-line function via scrollRef ──
+  const containerRef = useRef(null);
+  useEffect(() => {
+    if (scrollRef) {
+      scrollRef.current = (idx) => {
+        const el = wrapperRefs.current[idx];
+        if (el && containerRef.current) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+          refs.current[idx]?.focus();
+        }
+      };
+    }
+  }, [scrollRef]);
+
+  // ── typewriter scroll: keep cursor line centered when in focusMode ──
+  useEffect(() => {
+    if (!focusMode) return;
+    const el = wrapperRefs.current[curLine];
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [curLine, focusMode]);
+
+  // ── expose scroll-to-line via scrollRef ──
+  useEffect(() => {
+    if (scrollRef) scrollRef.current = (idx) => {
+      const el = wrapperRefs.current[idx];
+      if (el) { el.scrollIntoView({ behavior:"smooth", block:"center" }); refs.current[idx]?.focus(); }
+    };
+  });
+
+  // ── typewriter scroll: keep cursor centered in focus mode ──
+  useEffect(() => {
+    if (!focusMode) return;
+    const el = wrapperRefs.current[curLine];
+    if (el) el.scrollIntoView({ behavior:"smooth", block:"center" });
+  }, [curLine, focusMode]);
 
   // ── debounced sync to parent (300 ms after last keystroke) ──
   const scheduleSync = () => {
@@ -617,7 +653,7 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
   };
 
   return (
-    <div style={{ flex: 1, position: "relative", overflowY: "auto", background: "#D8D8D8", padding: "40px 0 80px" }}>
+    <div ref={containerRef} style={{ flex: 1, position: "relative", overflowY: "auto", background: "#D8D8D8", padding: "40px 0 80px" }}>
       {/* Mode pill */}
       <ModePill mode={lines[curLine]?.mode || "action"} visible={pillVisible} x={pillPos.x} y={pillPos.y} />
 
@@ -2326,10 +2362,302 @@ function Dashboard({ user, onOpen, onNew, onSignOut }) {
   );
 }
 
+
+// ─── KEYBOARD SHORTCUTS OVERLAY (Section 10) ─────────────────────────────────
+function ShortcutsOverlay({ onClose }) {
+  useEffect(() => {
+    const h = (e) => { if (e.key === "Escape" || (e.key === "/" && (e.metaKey || e.ctrlKey))) onClose(); };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onClose]);
+  const shortcuts = [
+    ["Tab","Cycle block type"],["Enter","New line (smart)"],["Shift+Tab","—"],["Esc","Cancel / back to action"],
+    ["⌘K","Toggle AI panel"],["⌘N","Inline note at cursor"],["⌘A","Select current block"],
+    ["⌘B","Beat Board"],["⌘M","Scene Navigator"],["⌘F","Focus / Typewriter mode"],
+    ["⌘/","This shortcuts list"],["Right-click","Add to cast"],
+  ];
+  return (
+    <div onClick={onClose} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.35)", zIndex:3000, display:"flex", alignItems:"center", justifyContent:"center" }}>
+      <div onClick={e=>e.stopPropagation()} style={{ background:"#FFF", border:"1px solid #D0D0D0", borderRadius:8, padding:"32px 36px", width:480, boxShadow:"0 8px 40px rgba(0,0,0,0.18)" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:24 }}>
+          <p style={{ margin:0, fontSize:13, fontWeight:800, color:"#000", letterSpacing:"-0.01em" }}>Keyboard Shortcuts</p>
+          <button onClick={onClose} style={{ background:"none", border:"none", cursor:"pointer", color:"#CCC", fontSize:18 }}>×</button>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"8px 32px" }}>
+          {shortcuts.map(([k,v]) => (
+            <div key={k} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"5px 0", borderBottom:"1px solid #F5F5F5" }}>
+              <span style={{ fontSize:11, color:"#888" }}>{v}</span>
+              <kbd style={{ background:"#F4F4F4", border:"1px solid #DDD", borderRadius:3, padding:"2px 7px", fontSize:10, fontWeight:700, color:"#555", fontFamily:"inherit", whiteSpace:"nowrap" }}>{k}</kbd>
+            </div>
+          ))}
+        </div>
+        <p style={{ margin:"20px 0 0", fontSize:10, color:"#CCC", textAlign:"center" }}>Click anywhere or press ⌘/ to close</p>
+      </div>
+    </div>
+  );
+}
+
+// ─── BEAT BOARD (Section 1) ───────────────────────────────────────────────────
+const ACT_LABELS = ["Act 1","Act 2A","Midpoint","Act 2B","Act 3","Custom"];
+
+function BeatBoard({ project, onUpdate }) {
+  const beats = project?.beats || [];
+  const [dragging, setDragging] = useState(null);
+  const [editing, setEditing] = useState(null); // id of card being edited
+  const [dragOver, setDragOver] = useState(null);
+
+  const save = (newBeats) => onUpdate({ beats: newBeats });
+
+  const addBeat = () => {
+    const b = { id: Date.now(), title:"New Beat", body:"", act:"Act 1" };
+    save([...beats, b]);
+    setEditing(b.id);
+  };
+
+  const updateBeat = (id, changes) => save(beats.map(b => b.id === id ? { ...b, ...changes } : b));
+  const deleteBeat = (id) => save(beats.filter(b => b.id !== id));
+
+  const handleDragStart = (e, idx) => { setDragging(idx); e.dataTransfer.effectAllowed = "move"; };
+  const handleDragOver = (e, idx) => { e.preventDefault(); setDragOver(idx); };
+  const handleDrop = (e, idx) => {
+    e.preventDefault();
+    if (dragging === null || dragging === idx) return;
+    const next = [...beats];
+    const [moved] = next.splice(dragging, 1);
+    next.splice(idx, 0, moved);
+    save(next);
+    setDragging(null); setDragOver(null);
+  };
+
+  // group by act
+  const actGroups = ACT_LABELS.filter(a => beats.some(b => b.act === a));
+
+  return (
+    <div style={{ flex:1, overflowY:"auto", padding:"32px 40px 80px", background:"#FAFAFA" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:28 }}>
+        <div>
+          <h2 style={{ margin:"0 0 4px", fontSize:18, fontWeight:900, color:"#000", letterSpacing:"-0.02em" }}>Beat Board</h2>
+          <p style={{ margin:0, fontSize:12, color:"#AAA" }}>Drag to reorder — planning only, does not affect script.</p>
+        </div>
+        <button onClick={addBeat} style={{ padding:"7px 16px", background:"#000", color:"#FFF", border:"none", borderRadius:4, cursor:"pointer", fontFamily:"inherit", fontWeight:700, fontSize:12 }}>+ Beat</button>
+      </div>
+
+      {beats.length === 0 && (
+        <div style={{ textAlign:"center", padding:"60px 0", color:"#CCC" }}>
+          <p style={{ fontSize:13, margin:"0 0 16px" }}>No beats yet. Click + Beat to start planning.</p>
+        </div>
+      )}
+
+      {ACT_LABELS.map(act => {
+        const group = beats.filter(b => b.act === act);
+        if (group.length === 0) return null;
+        return (
+          <div key={act} style={{ marginBottom:32 }}>
+            <p style={{ margin:"0 0 12px", fontSize:9, fontWeight:800, color:"#AAA", letterSpacing:"0.16em", textTransform:"uppercase" }}>{act}</p>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:12 }}>
+              {group.map(beat => {
+                const globalIdx = beats.indexOf(beat);
+                return (
+                  <div key={beat.id}
+                    draggable
+                    onDragStart={e => handleDragStart(e, globalIdx)}
+                    onDragOver={e => handleDragOver(e, globalIdx)}
+                    onDrop={e => handleDrop(e, globalIdx)}
+                    onDragEnd={() => { setDragging(null); setDragOver(null); }}
+                    style={{
+                      width:200, background:"#FFF", border:`1px solid ${dragOver === globalIdx ? "#000" : "#E0E0E0"}`,
+                      borderRadius:6, padding:"12px 14px", cursor:"grab",
+                      boxShadow: dragging === globalIdx ? "none" : "0 1px 4px rgba(0,0,0,0.07)",
+                      opacity: dragging === globalIdx ? 0.4 : 1, transition:"opacity 0.1s",
+                    }}
+                  >
+                    {editing === beat.id ? (
+                      <>
+                        <input value={beat.title} onChange={e => updateBeat(beat.id, { title: e.target.value })}
+                          style={{ width:"100%", border:"none", borderBottom:"1px solid #E0E0E0", outline:"none", fontSize:12, fontWeight:700, marginBottom:6, background:"transparent", fontFamily:"inherit" }}
+                          onBlur={() => setEditing(null)} autoFocus />
+                        <textarea value={beat.body} onChange={e => updateBeat(beat.id, { body: e.target.value })}
+                          style={{ width:"100%", border:"1px solid #EBEBEB", borderRadius:3, outline:"none", fontSize:11, resize:"none", minHeight:60, padding:6, fontFamily:"inherit", lineHeight:1.5, boxSizing:"border-box" }} />
+                        <select value={beat.act} onChange={e => updateBeat(beat.id, { act: e.target.value })}
+                          style={{ ...css.input, fontSize:10, padding:"3px 6px", marginTop:6 }}>
+                          {ACT_LABELS.map(a => <option key={a}>{a}</option>)}
+                        </select>
+                      </>
+                    ) : (
+                      <>
+                        <p style={{ margin:"0 0 5px", fontSize:12, fontWeight:700, color:"#000", lineHeight:1.3 }}>{beat.title || "Untitled"}</p>
+                        {beat.body && <p style={{ margin:"0 0 6px", fontSize:11, color:"#666", lineHeight:1.5 }}>{beat.body.slice(0,80)}{beat.body.length > 80 ? "…" : ""}</p>}
+                      </>
+                    )}
+                    <div style={{ display:"flex", justifyContent:"space-between", marginTop:8 }}>
+                      <button onClick={() => setEditing(beat.id)} style={{ background:"none", border:"none", cursor:"pointer", fontSize:10, color:"#BBB", padding:0, fontFamily:"inherit" }}>Edit</button>
+                      <button onClick={() => deleteBeat(beat.id)} style={{ background:"none", border:"none", cursor:"pointer", fontSize:10, color:"#CCC", padding:0, fontFamily:"inherit" }}>×</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ borderTop:"1px solid #EBEBEB", marginTop:20 }} />
+          </div>
+        );
+      })}
+
+      {/* beats not yet in any act group - show ungrouped */}
+      {beats.filter(b => !ACT_LABELS.includes(b.act)).map(beat => (
+        <div key={beat.id} style={{ width:200, background:"#FFF", border:"1px solid #E0E0E0", borderRadius:6, padding:"12px 14px", marginBottom:12, display:"inline-block", marginRight:12 }}>
+          <p style={{ margin:0, fontSize:12, fontWeight:700 }}>{beat.title}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── SCENE NAVIGATOR (Section 8) ──────────────────────────────────────────────
+const SCENE_STATUS = { todo:"○", inprogress:"◑", done:"●", revision:"✗" };
+
+function SceneNavigator({ lines, onJumpTo, collapsed, onToggle }) {
+  const scenes = [];
+  let page = 1;
+  lines.forEach((line, idx) => {
+    if (line.mode === "location" && line.text?.trim()) {
+      scenes.push({ idx, text: line.text.trim(), page });
+    }
+    // rough page estimation
+    if (idx > 0 && idx % 55 === 0) page++;
+  });
+
+  const [statuses, setStatuses] = useState({});
+  const cycleStatus = (idx, e) => {
+    e.stopPropagation();
+    const keys = Object.keys(SCENE_STATUS);
+    const cur = statuses[idx] || "todo";
+    const next = keys[(keys.indexOf(cur) + 1) % keys.length];
+    setStatuses(s => ({ ...s, [idx]: next }));
+  };
+
+  const w = collapsed ? 36 : 220;
+
+  return (
+    <div style={{ width: w, minWidth: w, borderRight:"1px solid #EBEBEB", background:"#FAFAFA", display:"flex", flexDirection:"column", flexShrink:0, transition:"width 0.15s", overflow:"hidden" }}>
+      <div style={{ padding:"12px 10px", borderBottom:"1px solid #EBEBEB", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
+        {!collapsed && <span style={{ fontSize:9, fontWeight:800, color:"#AAA", letterSpacing:"0.14em", textTransform:"uppercase" }}>Scenes</span>}
+        <button onClick={onToggle} style={{ background:"none", border:"none", cursor:"pointer", color:"#BBB", fontSize:13, padding:2, marginLeft:"auto" }}>{collapsed ? "▶" : "◀"}</button>
+      </div>
+      {!collapsed && (
+        <div style={{ flex:1, overflowY:"auto" }}>
+          {scenes.length === 0 && <p style={{ padding:"16px 12px", fontSize:11, color:"#CCC", fontStyle:"italic" }}>No scene headings yet.</p>}
+          {scenes.map((s, i) => (
+            <div key={s.idx} onClick={() => onJumpTo(s.idx)}
+              style={{ padding:"8px 12px", borderBottom:"1px solid #F0F0F0", cursor:"pointer", display:"flex", alignItems:"flex-start", gap:8 }}
+              onMouseEnter={e => e.currentTarget.style.background="#F5F5F5"}
+              onMouseLeave={e => e.currentTarget.style.background="transparent"}
+            >
+              <span style={{ fontSize:9, color:"#CCC", marginTop:2, flexShrink:0, minWidth:16 }}>{i+1}</span>
+              <div style={{ flex:1, overflow:"hidden" }}>
+                <p style={{ margin:0, fontSize:11, color:"#333", lineHeight:1.4, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{s.text}</p>
+                <span style={{ fontSize:9, color:"#BBB" }}>p.{s.page}</span>
+              </div>
+              <button onClick={e => cycleStatus(s.idx, e)} style={{ background:"none", border:"none", cursor:"pointer", fontSize:11, color:"#AAA", flexShrink:0, padding:0 }} title="Cycle status">
+                {SCENE_STATUS[statuses[s.idx] || "todo"]}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── ALTERNATE DIALOGUE (Section 7) ──────────────────────────────────────────
+function AlternatesPanel({ lineId, alts, onSave, onClose }) {
+  const [takes, setTakes] = useState(alts?.takes || [""]);
+  const [active, setActive] = useState(alts?.active || 0);
+
+  const save = (newTakes, newActive) => {
+    onSave({ takes: newTakes, active: newActive ?? active });
+  };
+
+  const addTake = () => {
+    const next = [...takes, ""];
+    setTakes(next);
+    setActive(next.length - 1);
+    save(next, next.length - 1);
+  };
+
+  const updateTake = (i, val) => {
+    const next = takes.map((t, idx) => idx === i ? val : t);
+    setTakes(next);
+    save(next);
+  };
+
+  const selectTake = (i) => { setActive(i); save(takes, i); };
+  const removeTake = (i) => {
+    if (takes.length <= 1) return;
+    const next = takes.filter((_, idx) => idx !== i);
+    const newActive = Math.min(active, next.length - 1);
+    setTakes(next); setActive(newActive); save(next, newActive);
+  };
+
+  return (
+    <div style={{ background:"#FAFAFA", border:"1px solid #E0E0E0", borderRadius:4, padding:"10px 12px", marginTop:4 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+        <span style={{ fontSize:9, fontWeight:800, color:"#AAA", letterSpacing:"0.12em", textTransform:"uppercase" }}>Alternates</span>
+        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+          <button onClick={addTake} style={{ background:"none", border:"none", cursor:"pointer", fontSize:11, color:"#555", padding:0, fontFamily:"inherit" }}>+ Take</button>
+          <button onClick={onClose} style={{ background:"none", border:"none", cursor:"pointer", fontSize:13, color:"#CCC" }}>×</button>
+        </div>
+      </div>
+      {takes.map((t, i) => (
+        <div key={i} style={{ display:"flex", alignItems:"flex-start", gap:6, marginBottom:6 }}>
+          <button onClick={() => selectTake(i)} style={{
+            flexShrink:0, width:18, height:18, borderRadius:"50%", border:`1px solid ${i === active ? "#000" : "#CCC"}`,
+            background: i === active ? "#000" : "none", cursor:"pointer", marginTop:2,
+          }} />
+          <textarea value={t} onChange={e => updateTake(i, e.target.value)}
+            style={{ flex:1, border:"1px solid #E8E8E8", borderRadius:3, outline:"none", resize:"none", minHeight:36, padding:"4px 8px", fontSize:12, fontFamily:"'Courier New',monospace", lineHeight:1.5, background: i === active ? "#FFF" : "#F8F8F8", boxSizing:"border-box" }} />
+          {takes.length > 1 && <button onClick={() => removeTake(i)} style={{ background:"none", border:"none", cursor:"pointer", color:"#CCC", fontSize:12, padding:0, marginTop:4 }}>×</button>}
+        </div>
+      ))}
+      <p style={{ margin:"4px 0 0", fontSize:9, color:"#CCC" }}>Filled circle = active take shown in script</p>
+    </div>
+  );
+}
+
+// ─── FORMAT GUIDE (Section 5) ─────────────────────────────────────────────────
+function FormatGuide({ format, onClose }) {
+  const cycle = FORMAT_CYCLES[format] || FORMAT_CYCLES.film;
+  const tips = {
+    action: "Describe what happens — full width, present tense.",
+    character: "Character name — auto-uppercase, centered.",
+    dialogue: "What they say — indented column.",
+    location: "INT./EXT. LOCATION — DAY/NIGHT — scene heading.",
+    direction: "(Parenthetical) — acting note in parens.",
+    note: "// private note — not printed in final script.",
+  };
+  return (
+    <div style={{ position:"fixed", bottom:48, right:20, width:260, background:"#FFF", border:"1px solid #D0D0D0", borderRadius:8, boxShadow:"0 4px 20px rgba(0,0,0,0.12)", zIndex:800, overflow:"hidden" }}>
+      <div style={{ padding:"10px 14px", borderBottom:"1px solid #EBEBEB", display:"flex", justifyContent:"space-between" }}>
+        <span style={{ fontSize:10, fontWeight:800, color:"#000", letterSpacing:"0.1em", textTransform:"uppercase" }}>Format Guide</span>
+        <button onClick={onClose} style={{ background:"none", border:"none", cursor:"pointer", color:"#CCC", fontSize:14 }}>×</button>
+      </div>
+      <div style={{ padding:"10px 14px" }}>
+        <p style={{ margin:"0 0 8px", fontSize:9, color:"#AAA", fontWeight:700, letterSpacing:"0.1em", textTransform:"uppercase" }}>Tab Cycle → {cycle.join(" → ")}</p>
+        {cycle.map(m => (
+          <div key={m} style={{ marginBottom:7 }}>
+            <span style={{ fontSize:10, fontWeight:700, color:"#000", textTransform:"uppercase", letterSpacing:"0.06em" }}>{m}</span>
+            <span style={{ fontSize:10, color:"#888", marginLeft:6 }}>{tips[m] || ""}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── APP SHELL ────────────────────────────────────────────────────────────────
 const NAV_ITEMS = [
   { id: "write",   icon: "✍", label: "Write"       },
   { id: "cast",    icon: "◉", label: "Cast"        },
+  { id: "beats",   icon: "⊞", label: "Beat Board"  },
   { id: "mood",    icon: "◈", label: "Mood Board"  },
   { id: "notes",   icon: "≡", label: "Notes"       },
   { id: "profile", icon: "◎", label: "Profile"     },
@@ -2344,6 +2672,13 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
   const [hoveredNav, setHoveredNav] = useState(null);
   const [pageInfo, setPageInfo] = useState({ cur: 1, total: 1 });
   const [importOpen, setImportOpen] = useState(false);
+  const [focusMode, setFocusMode] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [sceneNavCollapsed, setSceneNavCollapsed] = useState(true);
+  const [showFormatGuide, setShowFormatGuide] = useState(false);
+  const [wordCount, setWordCount] = useState(0);
+  const [lastSaved, setLastSaved] = useState(null);
+  const [altDialogue, setAltDialogue] = useState(null);
 
   const active = projects.find(p => p.id === activeId) || projects[0] || null;
 
@@ -2354,15 +2689,30 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
 
   useEffect(() => {
     const handler = (e) => {
-      // Cmd+K on Mac, Ctrl+K on Windows/Linux — works in browser without conflict
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
-        e.preventDefault();
-        setAiOpen(o => !o);
-      }
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key === "k") { e.preventDefault(); setAiOpen(o => !o); }
+      if (e.key === "b") { e.preventDefault(); setNav(n => n === "beats" ? "write" : "beats"); }
+      if (e.key === "f") { e.preventDefault(); setFocusMode(o => !o); }
+      if (e.key === "m") { e.preventDefault(); setSceneNavCollapsed(o => !o); }
+      if (e.key === "/") { e.preventDefault(); setShortcutsOpen(o => !o); }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, []);
+
+  // word count + autosave
+  useEffect(() => {
+    if (!active) return;
+    const wc = (active.lines || []).reduce((acc, l) => acc + (l.text || "").split(/\s+/).filter(Boolean).length, 0);
+    setWordCount(wc);
+  }, [active?.lines]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (active) { setLastSaved(new Date()); }
+    }, 30000);
+    return () => clearInterval(timer);
+  }, [active?.id]);
 
   const newProject = () => {
     const p = { id: Date.now(), title: "Untitled", format: profile.format, genre: profile.genre, lines: [], cast: [], notes: "", created: Date.now() };
@@ -2388,6 +2738,7 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
   };
 
   const updateMoodCards = (cards) => { if (active) updateProject(active.id, { moodCards: cards }); };
+  const updateBeats = (changes) => { if (active) updateProject(active.id, changes); };
 
   const importScript = (imported) => {
     const p = { id: Date.now(), title: imported.title, format: imported.format, genre: imported.genre, lines: imported.lines, cast: [], notes: "", moodCards: [], created: Date.now() };
@@ -2399,8 +2750,38 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
 
   const cast = active?.cast || [];
 
+  // jump to a scene line in the editor
+  const sceneNavRef = useRef(null); // passed down to SmartEditor to expose scroll fn
+  const jumpToLine = (idx) => {
+    if (sceneNavRef.current) sceneNavRef.current(idx);
+  };
+
+  const fmtLastSaved = () => {
+    if (!lastSaved) return "Not saved";
+    const sec = Math.floor((Date.now() - lastSaved) / 1000);
+    if (sec < 60) return "Just now";
+    return `${Math.floor(sec/60)}m ago`;
+  };
+
+  const sceneCount = (active?.lines || []).filter(l => l.mode === "location" && l.text?.trim()).length;
+
   return (
     <div style={{ height: "100vh", display: "flex", background: "#FFF", color: "#0A0A0A", fontFamily: "-apple-system,'Segoe UI',sans-serif", overflow: "hidden" }}>
+      {/* ── FOCUS MODE OVERLAY ── */}
+      {focusMode && (
+        <div style={{ position:"fixed", inset:0, zIndex:2000, background:"#FFF", display:"flex", flexDirection:"column" }}>
+          <div style={{ padding:"10px 20px", display:"flex", justifyContent:"space-between", alignItems:"center", borderBottom:"1px solid #EBEBEB" }}>
+            <span style={{ fontSize:12, fontWeight:700, color:"#000" }}>{active?.title || "Untitled"}</span>
+            <div style={{ display:"flex", gap:16, alignItems:"center" }}>
+              <span style={{ fontSize:11, color:"#AAA" }}>p.{pageInfo.cur}/{pageInfo.total} · {wordCount.toLocaleString()} words</span>
+              <button onClick={() => setFocusMode(false)} style={{ background:"none", border:"1px solid #DDD", borderRadius:4, padding:"4px 12px", cursor:"pointer", fontSize:11, fontFamily:"inherit", color:"#666" }}>Exit Focus ⌘F</button>
+            </div>
+          </div>
+          <div style={{ flex:1, overflow:"hidden" }}>
+            {active && <SmartEditor project={active} cast={cast} onUpdateContent={updateLines} onAddCharacter={addCharacter} format={active.format} onPageChange={(cur,total)=>setPageInfo({cur,total})} focusMode={true} scrollRef={sceneNavRef} />}
+          </div>
+        </div>
+      )}
       {/* ── LEFT RAIL ── */}
       <div style={{ width: 52, background: "#FFF", borderRight: "1px solid #EBEBEB", display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 16, flexShrink: 0, zIndex: 600 }}>
         {/* Wordmark — home button */}
@@ -2453,6 +2834,26 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
           <button onClick={newProject} style={{ width: 36, height: 36, borderRadius: 8, border: "1px dashed #CCC", background: "none", color: "#CCC", cursor: "pointer", fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.12s" }}>+</button>
         </div>
       </div>
+
+      {/* ── SCENE NAVIGATOR ── */}
+      {nav === "write" && (
+        <SceneNavigator
+          lines={active?.lines || []}
+          onJumpTo={jumpToLine}
+          collapsed={sceneNavCollapsed}
+          onToggle={() => setSceneNavCollapsed(o => !o)}
+        />
+      )}
+
+      {/* ── SCENE NAVIGATOR ── */}
+      {nav === "write" && (
+        <SceneNavigator
+          lines={active?.lines || []}
+          onJumpTo={jumpToLine}
+          collapsed={sceneNavCollapsed}
+          onToggle={() => setSceneNavCollapsed(o => !o)}
+        />
+      )}
 
       {/* ── CAST PANEL (inline, collapses) ── */}
       {castOpen && (
@@ -2515,7 +2916,7 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
         <div style={{ flex: 1, overflow: "hidden", display: "flex" }}>
           {nav === "write" && (
             active ? (
-              <SmartEditor project={active} cast={cast} onUpdateContent={updateLines} onAddCharacter={addCharacter} format={active.format} onPageChange={(cur, total) => setPageInfo({ cur, total })} />
+              <SmartEditor project={active} cast={cast} onUpdateContent={updateLines} onAddCharacter={addCharacter} format={active.format} onPageChange={(cur,total)=>setPageInfo({cur,total})} focusMode={focusMode} scrollRef={sceneNavRef} />
             ) : (
               <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16 }}>
                 <p style={{ fontSize: 16, color: "#AAA" }}>No project open</p>
@@ -2529,6 +2930,24 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
               notes={active?.notes || ""}
               onChange={updateNotes}
             />
+          )}
+
+          {nav === "beats" && active && (
+            <BeatBoard project={active} onUpdate={updateBeats} />
+          )}
+          {nav === "beats" && !active && (
+            <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center" }}>
+              <p style={{ color:"#CCC", fontSize:13 }}>Open a project first.</p>
+            </div>
+          )}
+
+          {nav === "beats" && active && (
+            <BeatBoard project={active} onUpdate={updateBeats} />
+          )}
+          {nav === "beats" && !active && (
+            <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center" }}>
+              <p style={{ color:"#CCC", fontSize:13 }}>Open a project first.</p>
+            </div>
           )}
 
           {nav === "mood" && active && (
@@ -2574,34 +2993,44 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
       {/* ── AI PANEL ── */}
       {aiOpen && active && <AIPanel project={active} cast={cast} onClose={() => setAiOpen(false)} />}
 
-      {/* ── Keyboard hint bar ── */}
+      {/* ── STATUS BAR (Section 11) ── */}
       <div style={{
-        position: "fixed", bottom: 0, left: 52, right: 0,
-        padding: "6px 20px", background: "#FAFAFA", borderTop: "1px solid #EBEBEB",
-        display: "flex", gap: 24, alignItems: "center", zIndex: 400,
+        position:"fixed", bottom:0, left:52, right:0,
+        padding:"0 20px", background:"#FAFAFA", borderTop:"1px solid #EBEBEB",
+        display:"flex", alignItems:"center", height:32, zIndex:400, gap:0,
       }}>
-        {[
-          ["Tab", "Cycle mode"],
-          ["Enter", "New line"],
-          ["Esc", "Cancel"],
-          ["⌘K", "Toggle AI"],
-          ["Right-click", "Add to cast"],
-        ].map(([k, v]) => (
-          <div key={k} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <kbd style={{ background: "#FFF", border: "1px solid #DDD", borderRadius: 3, padding: "1px 6px", fontSize: 10, fontFamily: "inherit", fontWeight: 700, color: "#555" }}>{k}</kbd>
-            <span style={{ fontSize: 10, color: "#BBB" }}>{v}</span>
-          </div>
-        ))}
-        {nav === "write" && active && (
-          <div style={{ marginLeft: "auto", fontSize: 11, color: "#AAA", fontWeight: 600, letterSpacing: "0.06em", fontFamily: "-apple-system,sans-serif" }}>
-            {pageInfo.cur} / {pageInfo.total}
-          </div>
+        {nav === "write" && active ? (
+          <>
+            <span style={{ fontSize:10, color:"#AAA" }}>p.{pageInfo.cur} of {pageInfo.total}</span>
+            <span style={{ margin:"0 10px", color:"#DDD" }}>|</span>
+            <span style={{ fontSize:10, color:"#AAA" }}>Scene {sceneCount > 0 ? Math.min(sceneCount, pageInfo.cur) : "—"}</span>
+            <span style={{ margin:"0 10px", color:"#DDD" }}>|</span>
+            <span style={{ fontSize:10, color:"#AAA" }}>{wordCount.toLocaleString()} words</span>
+            <span style={{ margin:"0 10px", color:"#DDD" }}>|</span>
+            <span style={{ fontSize:10, color:"#AAA" }}>~{pageInfo.total} min read</span>
+            <span style={{ margin:"0 10px", color:"#DDD" }}>|</span>
+            <span style={{ fontSize:10, color:"#AAA" }}>Saved {fmtLastSaved()}</span>
+          </>
+        ) : (
+          <span style={{ fontSize:10, color:"#CCC", fontStyle:"italic" }}>
+            {["Tab","Enter","Esc","⌘K"].map(k => <span key={k} style={{ marginRight:14 }}><kbd style={{ background:"#FFF", border:"1px solid #DDD", borderRadius:3, padding:"1px 5px", fontSize:9, fontWeight:700, color:"#666" }}>{k}</kbd></span>)}
+          </span>
         )}
+        <div style={{ marginLeft:"auto", display:"flex", gap:10, alignItems:"center" }}>
+          <button onClick={() => setShowFormatGuide(o => !o)} title="Format Guide (?)" style={{ background:"none", border:"1px solid #E0E0E0", borderRadius:3, padding:"2px 8px", fontSize:10, cursor:"pointer", color:"#888", fontFamily:"inherit" }}>?</button>
+          <button onClick={() => setShortcutsOpen(o => !o)} title="Shortcuts ⌘/" style={{ background:"none", border:"1px solid #E0E0E0", borderRadius:3, padding:"2px 8px", fontSize:10, cursor:"pointer", color:"#888", fontFamily:"inherit" }}>⌘/</button>
+          <button onClick={() => setFocusMode(o => !o)} title="Focus Mode ⌘F" style={{ background:"none", border:"1px solid #E0E0E0", borderRadius:3, padding:"2px 8px", fontSize:10, cursor:"pointer", color:"#888", fontFamily:"inherit" }}>⌘F</button>
+        </div>
       </div>
+
+      {/* ── SHORTCUTS OVERLAY ── */}
+      {shortcutsOpen && <ShortcutsOverlay onClose={() => setShortcutsOpen(false)} />}
+
+      {/* ── FORMAT GUIDE ── */}
+      {showFormatGuide && <FormatGuide format={active?.format || "film"} onClose={() => setShowFormatGuide(false)} />}
     </div>
   );
 }
-
     const container = document.getElementById('root');
     const reactRoot = ReactDOM.createRoot(container);
     reactRoot.render(<Root />);
