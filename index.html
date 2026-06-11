@@ -1,24 +1,4 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>StoryForge</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.development.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.development.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; }
-    html, body, #root { margin: 0; padding: 0; height: 100%; }
-    body { font-family: -apple-system, 'Segoe UI', sans-serif; }
-    select { appearance: auto; }
-  </style>
-</head>
-<body>
-  <div id="root"></div>
-  <script type="text/babel" data-presets="react">
-    const { useState, useEffect, useRef } = React;
-
+import { useState, useEffect, useRef } from "react";
 
 // ─── PALETTE: white bg, black text, hairline borders ─────────────────────────
 const T = {
@@ -801,17 +781,23 @@ function AIPanel({ project, cast, onClose }) {
 
   const run = async (sys, usr) => {
     setLoading(true); setResponse("");
-    // Use /api/chat proxy on Vercel, direct Anthropic endpoint in Claude artifact
-    const isArtifact = window.location.hostname.includes("claude.ai") || window.location.hostname === "localhost" || window.location.protocol === "blob:";
-    const url = isArtifact ? "https://api.anthropic.com/v1/messages" : "/api/chat";
+    const isArtifact = window.location.hostname.includes("claude.ai") || window.location.protocol === "blob:";
+    // Check for locally stored API key (set in Profile → API Key)
+    const localKey = LS.get("sf_api_key", null);
+    let url, headers;
+    if (isArtifact) {
+      url = "https://api.anthropic.com/v1/messages";
+      headers = { "Content-Type": "application/json" };
+    } else if (localKey) {
+      url = "https://api.anthropic.com/v1/messages";
+      headers = { "Content-Type": "application/json", "x-api-key": localKey, "anthropic-version": "2023-06-01" };
+    } else {
+      url = "/api/chat";
+      headers = { "Content-Type": "application/json" };
+    }
     try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1000, system: sys, messages: [{ role: "user", content: usr }] }),
-      });
+      const res = await fetch(url, { method: "POST", headers, body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1000, system: sys, messages: [{ role: "user", content: usr }] }) });
       const d = await res.json();
-      // Show actual error if API returned one
       if (d.error) {
         setResponse(`API error: ${d.error?.message || d.error?.type || JSON.stringify(d.error)}`);
       } else if (d.content) {
@@ -1703,7 +1689,7 @@ function Landing({ onStart, hasProfile }) {
 }
 
 // ─── ROOT ─────────────────────────────────────────────────────────────────────
-function Root() {
+export default function Root() {
   const [screen, setScreen] = useState("landing"); // landing | auth | setup | dashboard | app
   const [profile, setProfile] = useState(() => LS.get("sf_profile", null));
   const [user, setUser] = useState(() => LS.get("sf_current_user", null));
@@ -1947,10 +1933,12 @@ function MoodBoard({ project, onUpdateCards, onClose }) {
     setLoading(true); setError("");
     try {
       const _isArtifact = window.location.hostname.includes("claude.ai") || window.location.protocol === "blob:";
-      const _apiUrl = _isArtifact ? "https://api.anthropic.com/v1/messages" : "/api/chat";
+      const _localKey = LS.get("sf_api_key", null);
+      const _apiUrl = (_isArtifact || _localKey) ? "https://api.anthropic.com/v1/messages" : "/api/chat";
+      const _headers = { "Content-Type": "application/json", ...(_localKey && !_isArtifact ? { "x-api-key": _localKey, "anthropic-version": "2023-06-01" } : {}) };
       const res = await fetch(_apiUrl, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: _headers,
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
           max_tokens: 1000,
@@ -2068,10 +2056,12 @@ function ImportModal({ profile, onImport, onClose }) {
     const fmt_label = FORMATS.find(f => f.id === fmt)?.label || "Script";
     try {
       const _isArtifact = window.location.hostname.includes("claude.ai") || window.location.protocol === "blob:";
-      const _apiUrl = _isArtifact ? "https://api.anthropic.com/v1/messages" : "/api/chat";
+      const _localKey = LS.get("sf_api_key", null);
+      const _apiUrl = (_isArtifact || _localKey) ? "https://api.anthropic.com/v1/messages" : "/api/chat";
+      const _headers = { "Content-Type": "application/json", ...(_localKey && !_isArtifact ? { "x-api-key": _localKey, "anthropic-version": "2023-06-01" } : {}) };
       const res = await fetch(_apiUrl, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: _headers,
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
           max_tokens: 4000,
@@ -2685,6 +2675,49 @@ function FormatGuide({ format, onClose }) {
   );
 }
 
+
+// ─── API KEY FIELD ────────────────────────────────────────────────────────────
+function ApiKeyField() {
+  const [key, setKey] = useState(() => LS.get("sf_api_key", "") || "");
+  const [saved, setSaved] = useState(false);
+  const [show, setShow] = useState(false);
+
+  const save = () => {
+    LS.set("sf_api_key", key.trim());
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  const clear = () => { setKey(""); LS.set("sf_api_key", null); };
+
+  const display = show ? key : (key ? key.slice(0, 8) + "••••••••••••••••••••" : "");
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+        <input
+          value={display}
+          onChange={e => { if (show) setKey(e.target.value); }}
+          placeholder="sk-ant-api03-..."
+          style={{ ...css.input, flex: 1, fontFamily: "monospace", fontSize: 12 }}
+          onFocus={() => setShow(true)}
+          onBlur={() => setShow(false)}
+        />
+        <button onClick={save} style={{
+          padding: "9px 18px", background: saved ? "#444" : "#000", color: "#FFF",
+          border: "none", borderRadius: 4, cursor: "pointer", fontFamily: "inherit",
+          fontWeight: 700, fontSize: 12, whiteSpace: "nowrap", flexShrink: 0,
+        }}>{saved ? "✓ Saved" : "Save"}</button>
+      </div>
+      {key && (
+        <button onClick={clear} style={{ background: "none", border: "none", fontSize: 11, color: "#BBB", cursor: "pointer", fontFamily: "inherit", padding: 0 }}>
+          Remove key
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ─── APP SHELL ────────────────────────────────────────────────────────────────
 const NAV_ITEMS = [
   { id: "write",   icon: "✍", label: "Write"       },
@@ -3002,6 +3035,15 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
                   ))}
                 </div>
                 <button onClick={onEditProfile} style={{ marginTop: 24, padding: "10px 24px", background: "#000", color: "#FFF", border: "none", borderRadius: 4, cursor: "pointer", fontFamily: "inherit", fontWeight: 700 }}>Edit Profile</button>
+
+                {/* API Key section */}
+                <div style={{ marginTop: 40, paddingTop: 32, borderTop: "1px solid #EBEBEB" }}>
+                  <p style={{ margin: "0 0 6px", fontSize: 13, fontWeight: 700, color: "#000" }}>Anthropic API Key</p>
+                  <p style={{ margin: "0 0 14px", fontSize: 12, color: "#AAA", lineHeight: 1.6 }}>
+                    Paste your key from console.anthropic.com to enable AI features. Stored locally in your browser only — never sent anywhere except directly to Anthropic.
+                  </p>
+                  <ApiKeyField />
+                </div>
               </div>
             </div>
           )}
@@ -3052,9 +3094,3 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
     </div>
   );
 }
-    const container = document.getElementById('root');
-    const reactRoot = ReactDOM.createRoot(container);
-    reactRoot.render(<Root />);
-  </script>
-</body>
-</html>
