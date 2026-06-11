@@ -520,15 +520,18 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
         lineMode === "dialogue"  ? "character" :
         lineMode === "location"  ? "action" : "action";
       const newLine = { id: Date.now(), text: "", mode: nextMode };
-      // flush current textarea value into cache before splicing
+
+      // flush current textarea into cache
       textCache.current[idx] = refs.current[idx]?.value ?? (textCache.current[idx] || "");
+
+      // shift cache synchronously BEFORE setLines — use current lines.length
+      for (let i = lines.length; i > idx + 1; i--) {
+        textCache.current[i] = textCache.current[i - 1] ?? "";
+      }
+      textCache.current[idx + 1] = "";
+
       setLines(prev => {
         const next = [...prev];
-        // shift cache keys above idx
-        for (let i = next.length; i > idx + 1; i--) {
-          textCache.current[i] = textCache.current[i - 1] ?? "";
-        }
-        textCache.current[idx + 1] = "";
         next.splice(idx + 1, 0, newLine);
         return next;
       });
@@ -539,8 +542,10 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
 
     // ── BACKSPACE on empty line: remove line ──
     if (e.key === "Backspace") {
-      // Read from textCache first — DOM ref may not be attached yet if line was just created
-      const curVal = textCache.current[idx] ?? refs.current[idx]?.value ?? "";
+      // Prefer DOM value (always current), fall back to cache
+      // textCache[idx] being undefined means line was just created and is empty
+      const domVal = refs.current[idx]?.value;
+      const curVal = domVal !== undefined ? domVal : (textCache.current[idx] ?? "");
       if (curVal === "" && lines.length > 1) {
         e.preventDefault();
         setPopup(p => ({ ...p, visible: false }));
@@ -1050,7 +1055,7 @@ function CastPanel({ cast, onUpdate, onAdd, onClose }) {
           ))}
         </div>
         <div style={{ padding: "10px 12px", borderTop: "1px solid #EBEBEB" }}>
-          <button onClick={onAdd} style={{ width: "100%", padding: "7px", background: "#000", color: "#FFF", border: "none", borderRadius: 4, cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 700 }}>+ Add</button>
+          <button onClick={() => onAdd((newIdx) => setSel(newIdx))} style={{ width: "100%", padding: "7px", background: "#000", color: "#FFF", border: "none", borderRadius: 4, cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 700 }}>+ Add</button>
         </div>
       </div>
 
@@ -1109,6 +1114,8 @@ function CastPanel({ cast, onUpdate, onAdd, onClose }) {
 
           {/* Name */}
           <input value={cur.name || ""} onChange={e => upd("name", e.target.value)}
+            ref={el => { if (el && cur.name === "NEW CHARACTER") { el.focus(); el.select(); } }}
+            placeholder="CHARACTER NAME"
             style={{ background: "none", border: "none", borderBottom: "2px solid #000", color: "#000", fontSize: 18, fontWeight: 800, outline: "none", fontFamily: "inherit", width: "100%", paddingBottom: 5, marginBottom: 16, letterSpacing: "0.04em" }} />
 
           {/* Role */}
@@ -1159,8 +1166,11 @@ function CastPanel({ cast, onUpdate, onAdd, onClose }) {
           </div>
         </div>
       ) : (
-        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <p style={{ color: "#CCC", fontSize: 12 }}>Select a character</p>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12 }}>
+          <p style={{ color: "#CCC", fontSize: 12, margin: 0 }}>{cast.length === 0 ? "No characters yet" : "Select a character"}</p>
+          {cast.length === 0 && (
+            <button onClick={() => onAdd((newIdx) => setSel(newIdx))} style={{ padding: "8px 18px", background: "#000", color: "#FFF", border: "none", borderRadius: 4, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 700 }}>+ Add character</button>
+          )}
         </div>
       )}
     </div>
@@ -2858,9 +2868,11 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
         <CastPanel
           cast={cast}
           onUpdate={updateCharacter}
-          onAdd={() => {
+          onAdd={(onAdded) => {
             const c = { id: Date.now(), name: "NEW CHARACTER", role: "Supporting", voice: "", notes: "" };
             addCharacter(c);
+            // tell CastPanel which index the new char will be at
+            if (onAdded) onAdded(cast.length);
           }}
           onClose={() => setCastOpen(false)}
         />
