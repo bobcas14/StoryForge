@@ -811,8 +811,15 @@ function AIPanel({ project, cast, onClose }) {
         body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1000, system: sys, messages: [{ role: "user", content: usr }] }),
       });
       const d = await res.json();
-      setResponse(d.content?.filter(b => b.type === "text").map(b => b.text).join("") || "No response.");
-    } catch (err) { setResponse("Connection error. Check your API key in Vercel environment settings."); }
+      // Show actual error if API returned one
+      if (d.error) {
+        setResponse(`API error: ${d.error?.message || d.error?.type || JSON.stringify(d.error)}`);
+      } else if (d.content) {
+        setResponse(d.content.filter(b => b.type === "text").map(b => b.text).join("") || "No response.");
+      } else {
+        setResponse("Unexpected response: " + JSON.stringify(d).slice(0, 200));
+      }
+    } catch (err) { setResponse("Connection error: " + err.message); }
     setLoading(false);
   };
 
