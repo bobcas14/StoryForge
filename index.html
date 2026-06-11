@@ -1,4 +1,24 @@
-import { useState, useEffect, useRef } from "react";
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>StoryForge</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.development.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.development.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body, #root { margin: 0; padding: 0; height: 100%; }
+    body { font-family: -apple-system, 'Segoe UI', sans-serif; }
+    select { appearance: auto; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel" data-presets="react">
+    const { useState, useEffect, useRef } = React;
+
 
 // ─── PALETTE: white bg, black text, hairline borders ─────────────────────────
 const T = {
@@ -1689,7 +1709,7 @@ function Landing({ onStart, hasProfile }) {
 }
 
 // ─── ROOT ─────────────────────────────────────────────────────────────────────
-export default function Root() {
+function Root() {
   const [screen, setScreen] = useState("landing"); // landing | auth | setup | dashboard | app
   const [profile, setProfile] = useState(() => LS.get("sf_profile", null));
   const [user, setUser] = useState(() => LS.get("sf_current_user", null));
@@ -3094,3 +3114,9 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
     </div>
   );
 }
+    const container = document.getElementById('root');
+    const reactRoot = ReactDOM.createRoot(container);
+    reactRoot.render(<Root />);
+  </script>
+</body>
+</html>
