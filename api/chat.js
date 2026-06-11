@@ -6,10 +6,13 @@ export default async function handler(req, res) {
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    return res.status(500).json({ error: "ANTHROPIC_API_KEY not set in environment variables" });
+    return res.status(500).json({ error: { message: "ANTHROPIC_API_KEY not set in Vercel environment variables" } });
   }
 
   try {
+    // req.body is auto-parsed by Vercel when Content-Type is application/json
+    const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
@@ -17,14 +20,12 @@ export default async function handler(req, res) {
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
       },
-      body: JSON.stringify(req.body),
+      body: JSON.stringify(body),
     });
 
     const data = await response.json();
-
-    // Forward the status code from Anthropic
     res.status(response.status).json(data);
   } catch (err) {
-    res.status(500).json({ error: "Proxy error", detail: err.message });
+    res.status(500).json({ error: { message: "Proxy error: " + err.message } });
   }
 }
