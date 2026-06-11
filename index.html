@@ -539,7 +539,8 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
 
     // ── BACKSPACE on empty line: remove line ──
     if (e.key === "Backspace") {
-      const curVal = refs.current[idx]?.value ?? "";
+      // Read from textCache first — DOM ref may not be attached yet if line was just created
+      const curVal = textCache.current[idx] ?? refs.current[idx]?.value ?? "";
       if (curVal === "" && lines.length > 1) {
         e.preventDefault();
         setPopup(p => ({ ...p, visible: false }));
@@ -2152,27 +2153,30 @@ ${raw.slice(0, 8000)}` }],
 function NotesPanel({ notes, onChange }) {
   const [full, setFull] = useState(false);
 
-  const style = full ? {
-    position: "fixed", inset: 0, zIndex: 800, background: "#FFF",
-    display: "flex", flexDirection: "column",
-  } : {
-    width: 300, minWidth: 300, borderLeft: "1px solid #EBEBEB",
-    display: "flex", flexDirection: "column", background: "#FFF", flexShrink: 0,
-  };
-
-  return (
-    <div style={style}>
-      <div style={{ padding: "12px 16px", borderBottom: "1px solid #EBEBEB", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
-        <span style={{ fontSize: 10, fontWeight: 800, color: "#AAA", letterSpacing: "0.12em", textTransform: "uppercase" }}>Notes</span>
-        <button onClick={() => setFull(f => !f)} title={full ? "Collapse" : "Fullscreen"} style={{ background: "none", border: "none", cursor: "pointer", color: "#BBB", fontSize: 14, lineHeight: 1, padding: 2, fontFamily: "inherit" }}>
-          {full ? "⊡" : "⛶"}
-        </button>
+  // Fullscreen: fixed overlay over everything
+  if (full) return (
+    <div style={{ position:"fixed", inset:0, zIndex:800, background:"#FFF", display:"flex", flexDirection:"column" }}>
+      <div style={{ padding:"12px 20px", borderBottom:"1px solid #EBEBEB", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
+        <span style={{ fontSize:10, fontWeight:800, color:"#AAA", letterSpacing:"0.12em", textTransform:"uppercase" }}>Notes</span>
+        <button onClick={() => setFull(false)} title="Exit fullscreen" style={{ background:"none", border:"none", cursor:"pointer", color:"#BBB", fontSize:14, lineHeight:1, padding:2, fontFamily:"inherit" }}>⊡</button>
       </div>
-      <textarea
-        value={notes}
-        onChange={e => onChange(e.target.value)}
-        placeholder={"Lore rules, story notes, continuity tracking..."}
-        style={{ flex: 1, background: "#FFF", border: "none", color: "#333", padding: full ? "48px 80px" : "16px", fontSize: full ? 14 : 12, lineHeight: 1.8, fontFamily: "-apple-system,'Segoe UI',sans-serif", resize: "none", outline: "none" }}
+      <textarea value={notes} onChange={e => onChange(e.target.value)}
+        placeholder="Lore rules, story notes, continuity tracking..."
+        style={{ flex:1, background:"#FFF", border:"none", color:"#333", padding:"48px 80px", fontSize:14, lineHeight:1.9, fontFamily:"-apple-system,'Segoe UI',sans-serif", resize:"none", outline:"none" }}
+      />
+    </div>
+  );
+
+  // Sidebar: fixed 280px right panel beside the editor
+  return (
+    <div style={{ width:280, minWidth:280, maxWidth:280, borderLeft:"1px solid #EBEBEB", display:"flex", flexDirection:"column", background:"#FFF", flexShrink:0, overflow:"hidden" }}>
+      <div style={{ padding:"12px 16px", borderBottom:"1px solid #EBEBEB", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
+        <span style={{ fontSize:10, fontWeight:800, color:"#AAA", letterSpacing:"0.12em", textTransform:"uppercase" }}>Notes</span>
+        <button onClick={() => setFull(true)} title="Fullscreen" style={{ background:"none", border:"none", cursor:"pointer", color:"#BBB", fontSize:14, lineHeight:1, padding:2, fontFamily:"inherit" }}>⛶</button>
+      </div>
+      <textarea value={notes} onChange={e => onChange(e.target.value)}
+        placeholder="Lore rules, story notes, continuity tracking..."
+        style={{ flex:1, background:"#FFF", border:"none", color:"#333", padding:"14px 16px", fontSize:12, lineHeight:1.8, fontFamily:"-apple-system,'Segoe UI',sans-serif", resize:"none", outline:"none" }}
       />
     </div>
   );
@@ -2804,9 +2808,13 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
               <button onClick={() => {
                 if (item.id === "cast") {
                   setCastOpen(o => !o);
+                } else if (nav === item.id) {
+                  // pressing the active tab deselects — go back to write
+                  setNav("write");
+                  setCastOpen(false);
                 } else {
                   setNav(item.id);
-                  setCastOpen(false); // always collapse cast when switching views
+                  setCastOpen(false);
                 }
               }} style={{
                 width: 36, height: 36, borderRadius: 8, border: "none",
@@ -2834,16 +2842,6 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
           <button onClick={newProject} style={{ width: 36, height: 36, borderRadius: 8, border: "1px dashed #CCC", background: "none", color: "#CCC", cursor: "pointer", fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.12s" }}>+</button>
         </div>
       </div>
-
-      {/* ── SCENE NAVIGATOR ── */}
-      {nav === "write" && (
-        <SceneNavigator
-          lines={active?.lines || []}
-          onJumpTo={jumpToLine}
-          collapsed={sceneNavCollapsed}
-          onToggle={() => setSceneNavCollapsed(o => !o)}
-        />
-      )}
 
       {/* ── SCENE NAVIGATOR ── */}
       {nav === "write" && (
@@ -2914,7 +2912,8 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
 
         {/* ── CONTENT ── */}
         <div style={{ flex: 1, overflow: "hidden", display: "flex" }}>
-          {nav === "write" && (
+          {/* Editor always shows for write AND notes (notes is a sidebar beside it) */}
+          {(nav === "write" || nav === "notes") && (
             active ? (
               <SmartEditor project={active} cast={cast} onUpdateContent={updateLines} onAddCharacter={addCharacter} format={active.format} onPageChange={(cur,total)=>setPageInfo({cur,total})} focusMode={focusMode} scrollRef={sceneNavRef} />
             ) : (
@@ -2925,6 +2924,7 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
             )
           )}
 
+          {/* Notes sidebar — slides in beside the editor */}
           {nav === "notes" && (
             <NotesPanel
               notes={active?.notes || ""}
@@ -2932,22 +2932,13 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
             />
           )}
 
-          {nav === "beats" && active && (
-            <BeatBoard project={active} onUpdate={updateBeats} />
-          )}
-          {nav === "beats" && !active && (
-            <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center" }}>
-              <p style={{ color:"#CCC", fontSize:13 }}>Open a project first.</p>
-            </div>
-          )}
-
-          {nav === "beats" && active && (
-            <BeatBoard project={active} onUpdate={updateBeats} />
-          )}
-          {nav === "beats" && !active && (
-            <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center" }}>
-              <p style={{ color:"#CCC", fontSize:13 }}>Open a project first.</p>
-            </div>
+          {/* Beat Board — full content panel */}
+          {nav === "beats" && (
+            active
+              ? <BeatBoard project={active} onUpdate={updateBeats} />
+              : <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                  <p style={{ color:"#CCC", fontSize:13 }}>Open a project first.</p>
+                </div>
           )}
 
           {nav === "mood" && active && (
