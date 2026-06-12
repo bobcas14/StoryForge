@@ -511,10 +511,29 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
       return;
     }
 
-    // ── ENTER: insert new line below with smart mode ──
+    // ── ENTER: if line is blank → delete it; if not → create smart next line ──
     if (e.key === "Enter") {
       e.preventDefault();
       setPopup(p => ({ ...p, visible: false }));
+
+      const curVal = refs.current[idx]?.value ?? (textCache.current[idx] ?? "");
+
+      // Enter on a blank line = delete it (same as Backspace on empty)
+      if (curVal === "" && lines.length > 1) {
+        setLines(prev => {
+          const next = prev.filter((_, i) => i !== idx);
+          const newCache = {};
+          next.forEach((_, i) => { newCache[i] = textCache.current[i < idx ? i : i + 1] ?? ""; });
+          textCache.current = newCache;
+          return next;
+        });
+        const prevIdx = Math.max(0, idx - 1);
+        setCurLine(prevIdx);
+        focusLine(prevIdx);
+        return;
+      }
+
+      // Enter on a non-empty line → create smart next line
       const nextMode =
         lineMode === "character" ? "dialogue" :
         lineMode === "dialogue"  ? "character" :
@@ -524,7 +543,7 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
       // flush current textarea into cache
       textCache.current[idx] = refs.current[idx]?.value ?? (textCache.current[idx] || "");
 
-      // shift cache synchronously BEFORE setLines — use current lines.length
+      // shift cache synchronously BEFORE setLines
       for (let i = lines.length; i > idx + 1; i--) {
         textCache.current[i] = textCache.current[i - 1] ?? "";
       }
