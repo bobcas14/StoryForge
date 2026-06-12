@@ -297,7 +297,7 @@ function ContextMenu({ x, y, selectedText, onAddToCase, onClose }) {
 // ─── SMART EDITOR ─────────────────────────────────────────────────────────────
 // Uses textarea-per-line. React only owns mode + line structure.
 // Text value is owned entirely by the DOM (uncontrolled) — cursor never jumps.
-function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, onPageChange, focusMode, scrollRef }) {
+function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, onPageChange, focusMode, scrollRef, darkCanvas }) {
   const [lines, setLines] = useState(() =>
     project?.lines?.length ? project.lines : [{ id: Date.now(), text: "", mode: "action" }]
   );
@@ -678,12 +678,12 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
   };
 
   return (
-    <div ref={containerRef} style={{ flex: 1, position: "relative", overflowY: "auto", background: "#D8D8D8", padding: "40px 0 80px" }}>
+    <div ref={containerRef} style={{ flex: 1, position: "relative", overflowY: "auto", background: darkCanvas ? "#1A1A1A" : "#D8D8D8", padding: "40px 0 80px" }}>
       {/* Mode pill */}
       <ModePill mode={lines[curLine]?.mode || "action"} visible={pillVisible} x={pillPos.x} y={pillPos.y} />
 
       {/* Page canvas — 816px = 8.5" @ 96dpi */}
-      <div style={{ width: 816, margin: "0 auto", background: "#FFFFFF", boxShadow: "0 2px 16px rgba(0,0,0,0.18)" }}>
+      <div style={{ width: 816, margin: "0 auto", background: "#FFFFFF", boxShadow: darkCanvas ? "0 2px 32px rgba(0,0,0,0.5)" : "0 2px 16px rgba(0,0,0,0.18)" }}>
         {/* Top page margin */}
         <div style={{ height: 96 }} />
 
@@ -2596,35 +2596,33 @@ function SceneNavigator({ lines, onJumpTo, collapsed, onToggle }) {
     setStatuses(s => ({ ...s, [idx]: next }));
   };
 
-  const w = collapsed ? 36 : 220;
+  if (collapsed) return null;
 
   return (
-    <div style={{ width: w, minWidth: w, borderRight:"1px solid #EBEBEB", background:"#FAFAFA", display:"flex", flexDirection:"column", flexShrink:0, transition:"width 0.15s", overflow:"hidden" }}>
-      <div style={{ padding:"12px 10px", borderBottom:"1px solid #EBEBEB", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
-        {!collapsed && <span style={{ fontSize:9, fontWeight:800, color:"#AAA", letterSpacing:"0.14em", textTransform:"uppercase" }}>Scenes</span>}
-        <button onClick={onToggle} style={{ background:"none", border:"none", cursor:"pointer", color:"#BBB", fontSize:13, padding:2, marginLeft:"auto" }}>{collapsed ? "▶" : "◀"}</button>
+    <div style={{ width:220, minWidth:220, borderRight:"1px solid #EBEBEB", background:"#FAFAFA", display:"flex", flexDirection:"column", flexShrink:0, overflow:"hidden" }}>
+      <div style={{ padding:"12px 12px 10px", borderBottom:"1px solid #EBEBEB", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
+        <span style={{ fontSize:9, fontWeight:800, color:"#AAA", letterSpacing:"0.14em", textTransform:"uppercase" }}>Scenes</span>
+        <button onClick={onToggle} style={{ background:"none", border:"none", cursor:"pointer", color:"#BBB", fontSize:13, padding:2 }}>×</button>
       </div>
-      {!collapsed && (
-        <div style={{ flex:1, overflowY:"auto" }}>
-          {scenes.length === 0 && <p style={{ padding:"16px 12px", fontSize:11, color:"#CCC", fontStyle:"italic" }}>No scene headings yet.</p>}
-          {scenes.map((s, i) => (
-            <div key={s.idx} onClick={() => onJumpTo(s.idx)}
-              style={{ padding:"8px 12px", borderBottom:"1px solid #F0F0F0", cursor:"pointer", display:"flex", alignItems:"flex-start", gap:8 }}
-              onMouseEnter={e => e.currentTarget.style.background="#F5F5F5"}
-              onMouseLeave={e => e.currentTarget.style.background="transparent"}
-            >
-              <span style={{ fontSize:9, color:"#CCC", marginTop:2, flexShrink:0, minWidth:16 }}>{i+1}</span>
-              <div style={{ flex:1, overflow:"hidden" }}>
-                <p style={{ margin:0, fontSize:11, color:"#333", lineHeight:1.4, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{s.text}</p>
-                <span style={{ fontSize:9, color:"#BBB" }}>p.{s.page}</span>
-              </div>
-              <button onClick={e => cycleStatus(s.idx, e)} style={{ background:"none", border:"none", cursor:"pointer", fontSize:11, color:"#AAA", flexShrink:0, padding:0 }} title="Cycle status">
-                {SCENE_STATUS[statuses[s.idx] || "todo"]}
-              </button>
+      <div style={{ flex:1, overflowY:"auto" }}>
+        {scenes.length === 0 && <p style={{ padding:"16px 12px", fontSize:11, color:"#CCC", fontStyle:"italic" }}>No scene headings yet.</p>}
+        {scenes.map((s, i) => (
+          <div key={s.idx} onClick={() => onJumpTo(s.idx)}
+            style={{ padding:"8px 12px", borderBottom:"1px solid #F0F0F0", cursor:"pointer", display:"flex", alignItems:"flex-start", gap:8 }}
+            onMouseEnter={e => e.currentTarget.style.background="#F5F5F5"}
+            onMouseLeave={e => e.currentTarget.style.background="transparent"}
+          >
+            <span style={{ fontSize:9, color:"#CCC", marginTop:2, flexShrink:0, minWidth:16 }}>{i+1}</span>
+            <div style={{ flex:1, overflow:"hidden" }}>
+              <p style={{ margin:0, fontSize:11, color:"#333", lineHeight:1.4, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{s.text}</p>
+              <span style={{ fontSize:9, color:"#BBB" }}>p.{s.page}</span>
             </div>
-          ))}
-        </div>
-      )}
+            <button onClick={e => cycleStatus(s.idx, e)} style={{ background:"none", border:"none", cursor:"pointer", fontSize:11, color:"#AAA", flexShrink:0, padding:0 }} title="Cycle status">
+              {SCENE_STATUS[statuses[s.idx] || "todo"]}
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -2783,6 +2781,8 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
   const [wordCount, setWordCount] = useState(0);
   const [lastSaved, setLastSaved] = useState(null);
   const [altDialogue, setAltDialogue] = useState(null);
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+  const [darkCanvas, setDarkCanvas] = useState(false);
 
   const active = projects.find(p => p.id === activeId) || projects[0] || null;
 
@@ -2804,12 +2804,11 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  // word count + autosave
+  // word count — compute on load and on every change
   useEffect(() => {
-    if (!active) return;
-    const wc = (active.lines || []).reduce((acc, l) => acc + (l.text || "").split(/\s+/).filter(Boolean).length, 0);
+    const wc = (active?.lines || []).reduce((acc, l) => acc + (l.text || "").split(/\s+/).filter(Boolean).length, 0);
     setWordCount(wc);
-  }, [active?.lines]);
+  }, [active?.id, active?.lines]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -2974,35 +2973,61 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
         <div style={{ height: 48, borderBottom: "1px solid #EBEBEB", display: "flex", alignItems: "center", padding: "0 20px", gap: 16, flexShrink: 0 }}>
           {nav === "write" && active && (
             <>
-              <input value={active.title} onChange={e => updateProject(active.id, { title: e.target.value })}
-                style={{ background: "none", border: "none", color: "#000", fontSize: 14, fontWeight: 700, outline: "none", fontFamily: "inherit", flex: 1 }} />
-              <div style={{ width: 1, height: 20, background: "#EBEBEB" }} />
+              <div style={{ flex: 1, minWidth: 0, position: "relative", display: "flex", alignItems: "center", gap: 6 }}>
+                <input value={active.title} onChange={e => updateProject(active.id, { title: e.target.value })}
+                  style={{ background: "none", border: "none", color: "#000", fontSize: 14, fontWeight: 700, outline: "none", fontFamily: "inherit", flex: 1, minWidth: 0 }} />
+                {projects.length > 1 && (
+                  <button onClick={() => setProjectMenuOpen(o => !o)} style={{ background: "none", border: "none", cursor: "pointer", color: "#CCC", fontSize: 10, padding: "2px 4px", flexShrink: 0 }}>▾</button>
+                )}
+                {projectMenuOpen && (
+                  <div style={{ position: "absolute", top: "100%", left: 0, background: "#FFF", border: "1px solid #E0E0E0", borderRadius: 6, boxShadow: "0 4px 16px rgba(0,0,0,0.1)", zIndex: 600, minWidth: 220, maxHeight: 280, overflowY: "auto" }}>
+                    {projects.map(p => (
+                      <button key={p.id} onClick={() => { setActiveId(p.id); setProjectMenuOpen(false); }} style={{
+                        display: "block", width: "100%", padding: "9px 14px", background: p.id === active.id ? "#FAFAFA" : "none",
+                        border: "none", borderBottom: "1px solid #F5F5F5", cursor: "pointer", textAlign: "left",
+                        fontFamily: "inherit", fontSize: 12, fontWeight: p.id === active.id ? 700 : 400,
+                        color: p.id === active.id ? "#000" : "#555",
+                      }}>
+                        {p.title || "Untitled"}
+                        <span style={{ float: "right", fontSize: 10, color: "#CCC", fontWeight: 400 }}>{FORMATS.find(f => f.id === p.format)?.label}</span>
+                      </button>
+                    ))}
+                    <button onClick={() => { newProject(); setProjectMenuOpen(false); }} style={{ display: "block", width: "100%", padding: "9px 14px", background: "none", border: "none", borderTop: "1px solid #EBEBEB", cursor: "pointer", textAlign: "left", fontFamily: "inherit", fontSize: 12, color: "#888" }}>
+                      + New project
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div style={{ width: 1, height: 20, background: "#EBEBEB", flexShrink: 0 }} />
               <select value={active.format} onChange={e => updateProject(active.id, { format: e.target.value })}
-                style={{ background: "none", border: "none", color: "#888", fontSize: 12, outline: "none", fontFamily: "inherit", cursor: "pointer" }}>
+                style={{ background: "none", border: "none", color: "#888", fontSize: 12, outline: "none", fontFamily: "inherit", cursor: "pointer", flexShrink: 0 }}>
                 {FORMATS.map(f => <option key={f.id} value={f.id}>{f.label}</option>)}
               </select>
-              <select value={active.genre} onChange={e => updateProject(active.id, { genre: e.target.value })}
-                style={{ background: "none", border: "none", color: "#888", fontSize: 12, outline: "none", fontFamily: "inherit", cursor: "pointer" }}>
-                {GENRES.map(g => <option key={g}>{g}</option>)}
-              </select>
-              <div style={{ width: 1, height: 20, background: "#EBEBEB" }} />
+              <div style={{ width: 1, height: 20, background: "#EBEBEB", flexShrink: 0 }} />
               <button onClick={() => setAiOpen(o => !o)} style={{
-                padding: "7px 16px", borderRadius: 4,
+                padding: "6px 14px", borderRadius: 4, flexShrink: 0,
                 border: `1px solid ${aiOpen ? "#000" : "#D0D0D0"}`,
                 background: aiOpen ? "#000" : "#FAFAFA",
                 color: aiOpen ? "#FFF" : "#444",
                 fontSize: 12, fontWeight: 700, cursor: "pointer",
-                fontFamily: "inherit", letterSpacing: "0.06em",
-                transition: "all 0.12s", display: "flex", alignItems: "center", gap: 7,
+                fontFamily: "inherit", transition: "all 0.12s",
+                display: "flex", alignItems: "center", gap: 6,
               }}>
                 ✦ AI
-                <span style={{ fontSize: 10, color: aiOpen ? "#888" : "#BBB", fontWeight: 500, letterSpacing: 0 }}>⌘K</span>
+                <span style={{ fontSize: 10, color: aiOpen ? "#888" : "#BBB", fontWeight: 500 }}>⌘K</span>
               </button>
               <button onClick={() => setImportOpen(true)} style={{
-                padding: "7px 14px", borderRadius: 4, border: "1px solid #D0D0D0",
-                background: "#FAFAFA", color: "#444", fontSize: 12, fontWeight: 600,
-                cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.04em",
+                padding: "6px 12px", borderRadius: 4, border: "1px solid #D0D0D0", flexShrink: 0,
+                background: "#FAFAFA", color: "#555", fontSize: 12, fontWeight: 600,
+                cursor: "pointer", fontFamily: "inherit",
               }}>↑ Import</button>
+              <button onClick={() => setSceneNavCollapsed(o => !o)} title="Scene Navigator ⌘M" style={{
+                padding: "6px 10px", borderRadius: 4, flexShrink: 0,
+                border: `1px solid ${!sceneNavCollapsed ? "#000" : "#D0D0D0"}`,
+                background: !sceneNavCollapsed ? "#000" : "#FAFAFA",
+                color: !sceneNavCollapsed ? "#FFF" : "#555",
+                fontSize: 12, cursor: "pointer", fontFamily: "inherit",
+              }}>≡ Scenes</button>
             </>
           )}
           {nav !== "write" && (
@@ -3017,7 +3042,7 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
           {/* Editor always shows for write AND notes (notes is a sidebar beside it) */}
           {(nav === "write" || nav === "notes") && (
             active ? (
-              <SmartEditor project={active} cast={cast} onUpdateContent={updateLines} onAddCharacter={addCharacter} format={active.format} onPageChange={(cur,total)=>setPageInfo({cur,total})} focusMode={focusMode} scrollRef={sceneNavRef} />
+              <SmartEditor project={active} cast={cast} onUpdateContent={updateLines} onAddCharacter={addCharacter} format={active.format} onPageChange={(cur,total)=>setPageInfo({cur,total})} focusMode={focusMode} scrollRef={sceneNavRef} darkCanvas={darkCanvas} />
             ) : (
               <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16 }}>
                 <p style={{ fontSize: 16, color: "#AAA" }}>No project open</p>
@@ -3122,6 +3147,8 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
           <button onClick={() => setShowFormatGuide(o => !o)} title="Format Guide (?)" style={{ background:"none", border:"1px solid #E0E0E0", borderRadius:3, padding:"2px 8px", fontSize:10, cursor:"pointer", color:"#888", fontFamily:"inherit" }}>?</button>
           <button onClick={() => setShortcutsOpen(o => !o)} title="Shortcuts ⌘/" style={{ background:"none", border:"1px solid #E0E0E0", borderRadius:3, padding:"2px 8px", fontSize:10, cursor:"pointer", color:"#888", fontFamily:"inherit" }}>⌘/</button>
           <button onClick={() => setFocusMode(o => !o)} title="Focus Mode ⌘F" style={{ background:"none", border:"1px solid #E0E0E0", borderRadius:3, padding:"2px 8px", fontSize:10, cursor:"pointer", color:"#888", fontFamily:"inherit" }}>⌘F</button>
+          <button onClick={() => setDarkCanvas(o => !o)} title="Toggle canvas" style={{ background: darkCanvas ? "#333" : "none", border:"1px solid #E0E0E0", borderRadius:3, padding:"2px 8px", fontSize:10, cursor:"pointer", color: darkCanvas ? "#FFF" : "#888", fontFamily:"inherit" }}>&#9680;</button>
+          <button onClick={() => setDarkCanvas(o => !o)} title="Toggle canvas color" style={{ background: darkCanvas ? "#333" : "none", border:"1px solid #E0E0E0", borderRadius:3, padding:"2px 8px", fontSize:10, cursor:"pointer", color: darkCanvas ? "#FFF" : "#888", fontFamily:"inherit" }}>◐</button>
         </div>
       </div>
 
