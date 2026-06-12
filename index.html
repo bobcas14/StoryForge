@@ -716,6 +716,28 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
                 {line.notes?.length > 0 && (
                   <span style={{ position: "absolute", left: -20, top: 4, fontSize: 9, color: "#AAA", fontWeight: 700, cursor: "default", userSelect: "none" }} title={line.notes.map(n => n.text).join(" / ")}>¹</span>
                 )}
+                {/* Character photo dot — shows in script next to character name lines */}
+                {line.mode === "character" && (() => {
+                  const charName = (textCache.current[idx] || line.text || "").trim().toUpperCase();
+                  const charData = cast.find(c => c.name.toUpperCase() === charName);
+                  if (!charData?.image) return null;
+                  return (
+                    <div style={{ position: "absolute", right: -24, top: 6, zIndex: 50 }}
+                      onMouseEnter={e => { e.currentTarget.querySelector(".char-preview").style.display = "block"; }}
+                      onMouseLeave={e => { e.currentTarget.querySelector(".char-preview").style.display = "none"; }}
+                    >
+                      <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#000", opacity: 0.2, cursor: "pointer" }} />
+                      <div className="char-preview" style={{
+                        display: "none", position: "fixed", zIndex: 900,
+                        width: 100, height: 100, borderRadius: 6, overflow: "hidden",
+                        border: "1px solid #D0D0D0", boxShadow: "0 4px 16px rgba(0,0,0,0.15)",
+                        transform: "translateX(-110px) translateY(-40px)",
+                      }}>
+                        <img src={charData.image} alt={charData.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      </div>
+                    </div>
+                  );
+                })()}
                 <div
                   ref={el => { wrapperRefs.current[idx] = el; if (el && el.offsetHeight > 0) lineHeights.current[idx] = el.offsetHeight; }}
                   style={{ position: "relative", ...wrapperStyle(line.mode, format) }}
@@ -2760,6 +2782,174 @@ function ApiKeyField() {
   );
 }
 
+
+// ─── SCENE GALLERY PANEL ──────────────────────────────────────────────────────
+function SceneGallery({ project, onUpdate, currentPage }) {
+  const scenes = project?.sceneGallery || [];
+  const [adding, setAdding] = useState(false);
+  const [form, setForm] = useState({ label: "", fromPage: "", toPage: "", image: null });
+  const fileRef = useRef(null);
+
+  const save = (updated) => onUpdate({ sceneGallery: updated });
+
+  const handleImage = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => setForm(f => ({ ...f, image: ev.target.result }));
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  };
+
+  const addScene = () => {
+    if (!form.fromPage || !form.toPage || !form.image) return;
+    const entry = { id: Date.now(), label: form.label || `p.${form.fromPage}–${form.toPage}`, fromPage: parseInt(form.fromPage), toPage: parseInt(form.toPage), image: form.image };
+    save([...scenes, entry]);
+    setForm({ label: "", fromPage: "", toPage: "", image: null });
+    setAdding(false);
+  };
+
+  const deleteScene = (id) => save(scenes.filter(s => s.id !== id));
+
+  // find scenes that cover the current page
+  const active = scenes.filter(s => currentPage >= s.fromPage && currentPage <= s.toPage);
+  // all other scenes
+  const inactive = scenes.filter(s => currentPage < s.fromPage || currentPage > s.toPage);
+
+  const gridCols = active.length <= 1 ? 1 : active.length <= 2 ? 2 : active.length <= 4 ? 2 : 3;
+
+  return (
+    <div style={{ width: 220, minWidth: 220, borderLeft: "1px solid #EBEBEB", background: "#FAFAFA", display: "flex", flexDirection: "column", flexShrink: 0, overflow: "hidden" }}>
+      {/* Header */}
+      <div style={{ padding: "12px 14px 10px", borderBottom: "1px solid #EBEBEB", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+        <span style={{ fontSize: 9, fontWeight: 800, color: "#AAA", letterSpacing: "0.14em", textTransform: "uppercase" }}>Scene Gallery</span>
+        <button onClick={() => setAdding(o => !o)} style={{ background: "none", border: "none", cursor: "pointer", color: adding ? "#000" : "#BBB", fontSize: 16, lineHeight: 1, padding: 0 }}>+</button>
+      </div>
+
+      <div style={{ flex: 1, overflowY: "auto", padding: "12px 12px 48px" }}>
+
+        {/* Add form */}
+        {adding && (
+          <div style={{ background: "#FFF", border: "1px solid #E0E0E0", borderRadius: 6, padding: 12, marginBottom: 14 }}>
+            <p style={{ margin: "0 0 8px", fontSize: 10, fontWeight: 800, color: "#AAA", letterSpacing: "0.1em", textTransform: "uppercase" }}>New Scene</p>
+            <input value={form.label} onChange={e => setForm(f => ({ ...f, label: e.target.value }))}
+              placeholder="Label (e.g. Mountain Chase)"
+              style={{ ...css.input, fontSize: 11, marginBottom: 6 }} />
+            <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+              <input value={form.fromPage} onChange={e => setForm(f => ({ ...f, fromPage: e.target.value }))}
+                placeholder="From p." type="number" min="1"
+                style={{ ...css.input, fontSize: 11, flex: 1 }} />
+              <input value={form.toPage} onChange={e => setForm(f => ({ ...f, toPage: e.target.value }))}
+                placeholder="To p." type="number" min="1"
+                style={{ ...css.input, fontSize: 11, flex: 1 }} />
+            </div>
+            {/* Image upload */}
+            <div onClick={() => fileRef.current?.click()} style={{
+              border: "1px dashed #D0D0D0", borderRadius: 4, padding: "8px",
+              textAlign: "center", cursor: "pointer", marginBottom: 8,
+              background: form.image ? "none" : "#FAFAFA", overflow: "hidden",
+            }}>
+              {form.image
+                ? <img src={form.image} alt="" style={{ width: "100%", height: 80, objectFit: "cover", borderRadius: 3 }} />
+                : <p style={{ margin: 0, fontSize: 11, color: "#BBB" }}>Click to add image</p>
+              }
+            </div>
+            <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleImage} />
+            <div style={{ display: "flex", gap: 6 }}>
+              <button onClick={addScene} disabled={!form.fromPage || !form.toPage || !form.image} style={{
+                flex: 1, padding: "6px", background: "#000", color: "#FFF", border: "none",
+                borderRadius: 4, cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 700,
+                opacity: (!form.fromPage || !form.toPage || !form.image) ? 0.4 : 1,
+              }}>Add</button>
+              <button onClick={() => { setAdding(false); setForm({ label: "", fromPage: "", toPage: "", image: null }); }} style={{
+                padding: "6px 10px", background: "none", border: "1px solid #E0E0E0",
+                borderRadius: 4, cursor: "pointer", fontFamily: "inherit", fontSize: 11, color: "#888",
+              }}>Cancel</button>
+            </div>
+          </div>
+        )}
+
+        {/* Current page scenes */}
+        {active.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <p style={{ margin: "0 0 8px", fontSize: 9, fontWeight: 800, color: "#000", letterSpacing: "0.12em", textTransform: "uppercase" }}>Now — p.{currentPage}</p>
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: `repeat(${gridCols}, 1fr)`,
+              gap: 4,
+            }}>
+              {active.map(s => (
+                <div key={s.id} style={{ position: "relative", borderRadius: 4, overflow: "hidden", aspectRatio: "4/3" }}>
+                  <img src={s.image} alt={s.label} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                  <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(0,0,0,0.45)", padding: "3px 6px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: 9, color: "#FFF", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{s.label}</span>
+                    <button onClick={() => deleteScene(s.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.6)", fontSize: 11, padding: 0, lineHeight: 1, marginLeft: 4, flexShrink: 0 }}>×</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Characters on this page */}
+        {(() => {
+          const pageLines = project?.lines || [];
+          const pageStart = Math.max(0, (currentPage - 1) * 55);
+          const pageEnd = pageStart + 55;
+          const pageSlice = pageLines.slice(pageStart, pageEnd);
+          const charNames = [...new Set(pageSlice.filter(l => l.mode === "character" && l.text?.trim()).map(l => l.text.trim().toUpperCase()))];
+          const charData = charNames.map(name => (project?.cast || []).find(c => c.name.toUpperCase() === name)).filter(Boolean);
+          if (charData.length === 0) return null;
+          return (
+            <div style={{ marginBottom: 16 }}>
+              <p style={{ margin: "0 0 8px", fontSize: 9, fontWeight: 800, color: "#AAA", letterSpacing: "0.12em", textTransform: "uppercase" }}>Characters this page</p>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {charData.map(c => (
+                  <div key={c.id} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+                    <div style={{ width: 44, height: 44, borderRadius: 6, overflow: "hidden", border: "1px solid #E0E0E0", background: "#F4F4F4", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      {c.image
+                        ? <img src={c.image} alt={c.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        : <span style={{ fontSize: 14, fontWeight: 700, color: "#AAA" }}>{c.name[0]}</span>
+                      }
+                    </div>
+                    <span style={{ fontSize: 8, color: "#888", fontWeight: 600, textAlign: "center", maxWidth: 48, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* All other scene entries */}
+        {inactive.length > 0 && (
+          <div>
+            <p style={{ margin: "0 0 8px", fontSize: 9, fontWeight: 800, color: "#CCC", letterSpacing: "0.12em", textTransform: "uppercase" }}>All Scenes</p>
+            {inactive.map(s => (
+              <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid #F0F0F0" }}>
+                <div style={{ width: 36, height: 28, borderRadius: 3, overflow: "hidden", flexShrink: 0 }}>
+                  <img src={s.image} alt={s.label} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                </div>
+                <div style={{ flex: 1, overflow: "hidden" }}>
+                  <p style={{ margin: 0, fontSize: 11, fontWeight: 600, color: "#555", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.label}</p>
+                  <span style={{ fontSize: 9, color: "#CCC" }}>p.{s.fromPage}–{s.toPage}</span>
+                </div>
+                <button onClick={() => deleteScene(s.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#CCC", fontSize: 13, padding: 0, flexShrink: 0 }}>×</button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {scenes.length === 0 && !adding && (
+          <div style={{ textAlign: "center", padding: "32px 0", color: "#CCC" }}>
+            <p style={{ fontSize: 12, margin: "0 0 8px" }}>No scenes yet.</p>
+            <p style={{ fontSize: 11, margin: 0, lineHeight: 1.6 }}>Click + to attach an image to a page range.</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── APP SHELL ────────────────────────────────────────────────────────────────
 const NAV_ITEMS = [
   { id: "write",   icon: "✍", label: "Write"       },
@@ -2788,6 +2978,7 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
   const [altDialogue, setAltDialogue] = useState(null);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [darkCanvas, setDarkCanvas] = useState(false);
+  const [galleryOpen, setGalleryOpen] = useState(false);
 
   const active = projects.find(p => p.id === activeId) || projects[0] || null;
 
@@ -2847,6 +3038,7 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
 
   const updateMoodCards = (cards) => { if (active) updateProject(active.id, { moodCards: cards }); };
   const updateBeats = (changes) => { if (active) updateProject(active.id, changes); };
+  const updateSceneGallery = (changes) => { if (active) updateProject(active.id, changes); };
 
   const importScript = (imported) => {
     const p = { id: Date.now(), title: imported.title, format: imported.format, genre: imported.genre, lines: imported.lines, cast: [], notes: "", moodCards: [], created: Date.now() };
@@ -3036,6 +3228,20 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
                 color: !sceneNavCollapsed ? "#FFF" : "#555",
                 fontSize: 12, cursor: "pointer", fontFamily: "inherit",
               }}>≡ Scenes</button>
+              <button onClick={() => setGalleryOpen(o => !o)} title="Scene Gallery" style={{
+                padding: "6px 10px", borderRadius: 4, flexShrink: 0,
+                border: `1px solid ${galleryOpen ? "#000" : "#D0D0D0"}`,
+                background: galleryOpen ? "#000" : "#FAFAFA",
+                color: galleryOpen ? "#FFF" : "#555",
+                fontSize: 12, cursor: "pointer", fontFamily: "inherit",
+              }}>⬚ Gallery</button>
+              <button onClick={() => setGalleryOpen(o => !o)} title="Scene Gallery" style={{
+                padding: "6px 10px", borderRadius: 4, flexShrink: 0,
+                border: `1px solid ${galleryOpen ? "#000" : "#D0D0D0"}`,
+                background: galleryOpen ? "#000" : "#FAFAFA",
+                color: galleryOpen ? "#FFF" : "#555",
+                fontSize: 12, cursor: "pointer", fontFamily: "inherit",
+              }}>⬚ Gallery</button>
             </>
           )}
           {nav !== "write" && (
@@ -3057,6 +3263,24 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
                 <button onClick={newProject} style={{ padding: "10px 24px", background: "#000", color: "#FFF", border: "none", borderRadius: 4, cursor: "pointer", fontFamily: "inherit", fontWeight: 700 }}>New Project</button>
               </div>
             )
+          )}
+
+          {/* Scene Gallery — right sidebar beside editor */}
+          {galleryOpen && nav === "write" && active && (
+            <SceneGallery
+              project={active}
+              onUpdate={updateSceneGallery}
+              currentPage={pageInfo.cur}
+            />
+          )}
+
+          {/* Scene Gallery — right sidebar beside editor */}
+          {galleryOpen && nav === "write" && active && (
+            <SceneGallery
+              project={active}
+              onUpdate={updateSceneGallery}
+              currentPage={pageInfo.cur}
+            />
           )}
 
           {/* Notes sidebar — slides in beside the editor */}
