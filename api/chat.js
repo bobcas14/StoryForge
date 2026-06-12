@@ -1,5 +1,4 @@
 export default async function handler(req, res) {
-  // Only allow POST
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
@@ -10,7 +9,6 @@ export default async function handler(req, res) {
   }
 
   try {
-    // req.body is auto-parsed by Vercel when Content-Type is application/json
     const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
 
     const response = await fetch("https://api.anthropic.com/v1/messages", {
