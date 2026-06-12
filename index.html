@@ -1,24 +1,4 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>StoryForge</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.development.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.development.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; }
-    html, body, #root { margin: 0; padding: 0; height: 100%; }
-    body { font-family: -apple-system, 'Segoe UI', sans-serif; }
-    select { appearance: auto; }
-  </style>
-</head>
-<body>
-  <div id="root"></div>
-  <script type="text/babel" data-presets="react">
-    const { useState, useEffect, useRef } = React;
-
+import { useState, useEffect, useRef } from "react";
 
 // ─── PALETTE: white bg, black text, hairline borders ─────────────────────────
 const T = {
@@ -816,7 +796,7 @@ function AIPanel({ project, cast, onClose }) {
       headers = { "Content-Type": "application/json" };
     }
     try {
-      const res = await fetch(url, { method: "POST", headers, body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1000, system: sys, messages: [{ role: "user", content: usr }] }) });
+      const res = await fetch(url, { method: "POST", headers, body: JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 1000, system: sys, messages: [{ role: "user", content: usr }] }) });
       const d = await res.json();
       if (d.error) {
         setResponse(`API error: ${d.error?.message || d.error?.type || JSON.stringify(d.error)}`);
@@ -1709,7 +1689,7 @@ function Landing({ onStart, hasProfile }) {
 }
 
 // ─── ROOT ─────────────────────────────────────────────────────────────────────
-function Root() {
+export default function Root() {
   const [screen, setScreen] = useState("landing"); // landing | auth | setup | dashboard | app
   const [profile, setProfile] = useState(() => LS.get("sf_profile", null));
   const [user, setUser] = useState(() => LS.get("sf_current_user", null));
@@ -1960,7 +1940,7 @@ function MoodBoard({ project, onUpdateCards, onClose }) {
         method: "POST",
         headers: _headers,
         body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
+          model: "claude-sonnet-4-5",
           max_tokens: 1000,
           system: "You are a creative research assistant for writers. Return ONLY valid JSON — an array of objects with keys: title (short, 3-5 words), body (2-3 sentence insight, vivid and specific), tag (one word category: Tone / World / Character / Style / Theme / Visual). No markdown, no preamble.",
           messages: [{ role: "user", content: `Research this for a writing project. Extract 4-6 key creative reference points a writer could use:
@@ -2083,7 +2063,7 @@ function ImportModal({ profile, onImport, onClose }) {
         method: "POST",
         headers: _headers,
         body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
+          model: "claude-sonnet-4-5",
           max_tokens: 4000,
           system: `You are a script formatting engine. Classify each line of the provided script into one of these modes: action, character, dialogue, location, direction, note. Return ONLY valid JSON — an array of objects with keys "text" (string) and "mode" (string). No markdown, no preamble, no explanation. Empty lines should be omitted.`,
           messages: [{ role: "user", content: `Format: ${fmt_label}. Genre: ${genre}.
@@ -3114,9 +3094,3 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
     </div>
   );
 }
-    const container = document.getElementById('root');
-    const reactRoot = ReactDOM.createRoot(container);
-    reactRoot.render(<Root />);
-  </script>
-</body>
-</html>
