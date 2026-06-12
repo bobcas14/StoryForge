@@ -1093,10 +1093,15 @@ function CastPanel({ cast, onUpdate, onAdd, onClose }) {
             </button>
           ))}
         </div>
-        <div style={{ padding: "10px 12px", borderTop: "1px solid #EBEBEB" }}>
-          <button onClick={() => onAdd((newIdx) => setSel(newIdx))} style={{ width: "100%", padding: "7px", background: "#000", color: "#FFF", border: "none", borderRadius: 4, cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 700 }}>+ Add</button>
-        </div>
-      </div>
+       <div style={{ padding: "10px 12px", borderTop: "1px solid #EBEBEB", display: "flex", gap: 6 }}>
+  <button onClick={() => onAdd((newIdx) => setSel(newIdx))} style={{ flex: 1, padding: "7px", background: "#000", color: "#FFF", border: "none", borderRadius: 4, cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 700 }}>+ Add</button>
+  <button onClick={() => {
+    if (cast.length === 0) return;
+    if (!window.confirm(`Delete ${cast[sel]?.name}?`)) return;
+    onDelete(cast[sel].id);
+    setSel(Math.max(0, sel - 1));
+  }} style={{ padding: "7px 10px", background: "none", border: "1px solid #E0E0E0", borderRadius: 4, cursor: "pointer", fontFamily: "inherit", fontSize: 11, color: "#AAA" }}>✕</button>
+</div>
 
       {/* Character editor */}
       {cur ? (
