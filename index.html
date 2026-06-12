@@ -19,7 +19,6 @@
   <script type="text/babel" data-presets="react">
     const { useState, useEffect, useRef } = React;
 
-
 // ─── PALETTE: white bg, black text, hairline borders ─────────────────────────
 const T = {
   bg:       "#FFFFFF",
@@ -1000,7 +999,7 @@ function AIPanel({ project, cast, onClose }) {
 }
 
 // ─── CAST PANEL (inline collapsible, not an overlay) ─────────────────────────
-function CastPanel({ cast, onUpdate, onAdd, onClose }) {
+function CastPanel({ cast, onUpdate, onAdd, onDelete, onClose }) {
   const [sel, setSel] = useState(0);
   const [saved, setSaved] = useState(false);
   const imgInputRef = useRef(null);
@@ -1093,19 +1092,20 @@ function CastPanel({ cast, onUpdate, onAdd, onClose }) {
             </button>
           ))}
         </div>
-       <div style={{ padding: "10px 12px", borderTop: "1px solid #EBEBEB", display: "flex", gap: 6 }}>
-  <button onClick={() => onAdd((newIdx) => setSel(newIdx))} style={{ flex: 1, padding: "7px", background: "#000", color: "#FFF", border: "none", borderRadius: 4, cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 700 }}>+ Add</button>
-  <button onClick={() => {
-    if (cast.length === 0) return;
-    if (!window.confirm(`Delete ${cast[sel]?.name}?`)) return;
-    onDelete(cast[sel].id);
-    setSel(Math.max(0, sel - 1));
-  }} style={{ padding: "7px 10px", background: "none", border: "1px solid #E0E0E0", borderRadius: 4, cursor: "pointer", fontFamily: "inherit", fontSize: 11, color: "#AAA" }}>✕</button>
-</div>
+        <div style={{ padding: "10px 12px", borderTop: "1px solid #EBEBEB", display: "flex", gap: 6 }}>
+          <button onClick={() => onAdd((newIdx) => setSel(newIdx))} style={{ flex: 1, padding: "7px", background: "#000", color: "#FFF", border: "none", borderRadius: 4, cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 700 }}>+ Add</button>
+          <button onClick={() => {
+            if (cast.length === 0) return;
+            if (!window.confirm(`Delete ${cast[sel]?.name}?`)) return;
+            onDelete(cast[sel].id);
+            setSel(Math.max(0, sel - 1));
+          }} style={{ padding: "7px 10px", background: "none", border: "1px solid #E0E0E0", borderRadius: 4, cursor: "pointer", fontFamily: "inherit", fontSize: 11, color: "#AAA" }}>✕</button>
+        </div>
+      </div>
 
       {/* Character editor */}
       {cur ? (
-        <div style={{ flex: 1, overflowY: "auto", padding: "20px 18px", display: "flex", flexDirection: "column" }}>
+        <div style={{ flex: 1, overflowY: "auto", padding: "20px 18px 52px", display: "flex", flexDirection: "column" }}>
 
           {/* Avatar upload */}
           <div style={{ display: "flex", alignItems: "flex-end", gap: 14, marginBottom: 18 }}>
@@ -2965,8 +2965,11 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
           onAdd={(onAdded) => {
             const c = { id: Date.now(), name: "NEW CHARACTER", role: "Supporting", voice: "", notes: "" };
             addCharacter(c);
-            // tell CastPanel which index the new char will be at
             if (onAdded) onAdded(cast.length);
+          }}
+          onDelete={(charId) => {
+            if (!active) return;
+            updateProject(active.id, { cast: active.cast.filter(c => c.id !== charId) });
           }}
           onClose={() => setCastOpen(false)}
         />
@@ -3164,8 +3167,7 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
       {showFormatGuide && <FormatGuide format={active?.format || "film"} onClose={() => setShowFormatGuide(false)} />}
     </div>
   );
-}
-    const container = document.getElementById('root');
+}    const container = document.getElementById('root');
     const reactRoot = ReactDOM.createRoot(container);
     reactRoot.render(<Root />);
   </script>
