@@ -698,7 +698,7 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
   };
 
   return (
-    <div ref={containerRef} style={{ flex: 1, minWidth: 0, position: "relative", overflowX: "auto", overflowY: "auto", background: darkCanvas ? "#1A1A1A" : "#D8D8D8", padding: "40px 0 80px" }}>
+    <div ref={containerRef} style={{ flex: 1, width: 0, minWidth: 0, position: "relative", overflowY: "auto", background: darkCanvas ? "#1A1A1A" : "#D8D8D8", padding: "40px 0 80px" }}>
       {/* Mode pill */}
       <ModePill mode={lines[curLine]?.mode || "action"} visible={pillVisible} x={pillPos.x} y={pillPos.y} />
 
@@ -3562,11 +3562,11 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
             </>
           )}
         {/* ── CONTENT ── */}
-        <div style={{ flex: 1, overflow: "hidden", display: "flex" }}>
+        <div style={{ flex: 1, overflow: "hidden", display: "flex", minWidth: 0 }}>
           {/* Editor always shows for write AND notes (notes is a sidebar beside it) */}
           {(nav === "write" || nav === "notes") && (
             active ? (
-              <SmartEditor project={active} cast={cast} onUpdateContent={updateLines} onAddCharacter={addCharacter} format={active.format} onPageChange={(cur,total)=>setPageInfo({cur,total})} focusMode={focusMode} scrollRef={sceneNavRef} darkCanvas={darkCanvas} onCharFocus={setCurrentCharName} />
+              <SmartEditor project={active} cast={cast} onUpdateContent={updateLines} onAddCharacter={addCharacter} format={active.format} onPageChange={(cur,total)=>setPageInfo({cur,total})} focusMode={focusMode} scrollRef={sceneNavRef} darkCanvas={darkCanvas} onCharFocus={setCurrentCharName} key={active?.id} />
             ) : (
               <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16 }}>
                 <p style={{ fontSize: 16, color: "#AAA" }}>No project open</p>
