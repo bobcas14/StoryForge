@@ -3575,22 +3575,24 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
             )
           )}
 
-          {/* Character Context Panel — right sidebar */}
-          {charPanelOpen && nav === "write" && (
-            <CharacterContextPanel
-              cast={cast}
-              currentCharName={currentCharName}
-              onClose={() => setCharPanelOpen(false)}
-            />
-          )}
-
-          {/* Scene Gallery — right sidebar beside editor */}
-          {galleryOpen && nav === "write" && active && (
-            <SceneGallery
-              project={active}
-              onUpdate={updateSceneGallery}
-              currentPage={pageInfo.cur}
-            />
+          {/* Right sidebars — fixed width, never shrink the editor */}
+          {(charPanelOpen || galleryOpen) && nav === "write" && (
+            <div style={{ display: "flex", flexShrink: 0 }}>
+              {charPanelOpen && (
+                <CharacterContextPanel
+                  cast={cast}
+                  currentCharName={currentCharName}
+                  onClose={() => setCharPanelOpen(false)}
+                />
+              )}
+              {galleryOpen && active && (
+                <SceneGallery
+                  project={active}
+                  onUpdate={updateSceneGallery}
+                  currentPage={pageInfo.cur}
+                />
+              )}
+            </div>
           )}
           {/* Notes sidebar — slides in beside the editor */}
           {nav === "notes" && (
