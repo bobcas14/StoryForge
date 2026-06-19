@@ -698,12 +698,12 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
   };
 
   return (
-    <div ref={containerRef} style={{ flex: 1, minWidth: 0, position: "relative", overflowY: "auto", background: darkCanvas ? "#1A1A1A" : "#D8D8D8", padding: "40px 0 80px" }}>
+    <div ref={containerRef} style={{ flex: 1, minWidth: 0, position: "relative", overflowX: "auto", overflowY: "auto", background: darkCanvas ? "#1A1A1A" : "#D8D8D8", padding: "40px 0 80px" }}>
       {/* Mode pill */}
       <ModePill mode={lines[curLine]?.mode || "action"} visible={pillVisible} x={pillPos.x} y={pillPos.y} />
 
-      {/* Page canvas — 816px = 8.5" @ 96dpi */}
-      <div style={{ width: "min(816px, 100%)", margin: "0 auto", background: "#FFFFFF", boxShadow: darkCanvas ? "0 2px 32px rgba(0,0,0,0.5)" : "0 2px 16px rgba(0,0,0,0.18)" }}>
+      {/* Page canvas — 816px = 8.5" @ 96dpi, always centered */}
+      <div style={{ width: 816, maxWidth: "100%", margin: "0 auto", background: "#FFFFFF", boxShadow: darkCanvas ? "0 2px 32px rgba(0,0,0,0.5)" : "0 2px 16px rgba(0,0,0,0.18)" }}>
         {/* Top page margin */}
         <div style={{ height: 96 }} />
 
