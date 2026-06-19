@@ -698,12 +698,12 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
   };
 
   return (
-    <div ref={containerRef} style={{ flex: 1, position: "relative", overflowY: "auto", background: darkCanvas ? "#1A1A1A" : "#D8D8D8", padding: "40px 0 80px" }}>
+    <div ref={containerRef} style={{ flex: 1, minWidth: 0, position: "relative", overflowY: "auto", background: darkCanvas ? "#1A1A1A" : "#D8D8D8", padding: "40px 0 80px" }}>
       {/* Mode pill */}
       <ModePill mode={lines[curLine]?.mode || "action"} visible={pillVisible} x={pillPos.x} y={pillPos.y} />
 
       {/* Page canvas — 816px = 8.5" @ 96dpi */}
-      <div style={{ width: 816, margin: "0 auto", background: "#FFFFFF", boxShadow: darkCanvas ? "0 2px 32px rgba(0,0,0,0.5)" : "0 2px 16px rgba(0,0,0,0.18)" }}>
+      <div style={{ width: "min(816px, 100%)", margin: "0 auto", background: "#FFFFFF", boxShadow: darkCanvas ? "0 2px 32px rgba(0,0,0,0.5)" : "0 2px 16px rgba(0,0,0,0.18)" }}>
         {/* Top page margin */}
         <div style={{ height: 96 }} />
 
@@ -851,6 +851,11 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
         textarea::placeholder { color: #CCCCCC; font-style: italic; }
         textarea { scrollbar-width: none; }
         textarea::-webkit-scrollbar { display: none; }
+        @keyframes sf-progress {
+          0% { width: 5%; margin-left: 0; }
+          50% { width: 60%; margin-left: 20%; }
+          100% { width: 5%; margin-left: 95%; }
+        }
       `}</style>
     </div>
   );
@@ -1485,7 +1490,6 @@ const FEATURES_LIST = [
 function Landing({ onStart, hasProfile }) {
   const [section, setSection] = useState("home"); // home | features | formats | pricing
   const [formatIdx, setFormatIdx] = useState(0);
-  const [pillTimer, setPillTimer] = useState(null);
 
   // smooth scroll to section on nav click
   const goSection = (s) => setSection(s);
@@ -1790,12 +1794,62 @@ function Landing({ onStart, hasProfile }) {
 
 // ─── ROOT ─────────────────────────────────────────────────────────────────────
 function Root() {
-  const [screen, setScreen] = useState("landing"); // landing | auth | setup | dashboard | app
+  const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
+
+  // On load: check if saved session is still valid
+  const loadUser = () => {
+    const saved = LS.get("sf_current_user", null);
+    if (!saved) return null;
+    const lastActive = LS.get("sf_last_active", 0);
+    if (Date.now() - lastActive > SESSION_TIMEOUT) {
+      // Session expired — clear it
+      LS.set("sf_current_user", null);
+      LS.set("sf_last_active", null);
+      return null;
+    }
+    return saved;
+  };
+
+  const [screen, setScreen] = useState("landing");
   const [profile, setProfile] = useState(() => LS.get("sf_profile", null));
-  const [user, setUser] = useState(() => LS.get("sf_current_user", null));
+  const [user, setUser] = useState(() => loadUser());
   const [dashProjects, setDashProjects] = useState([]);
   const [dashSave, setDashSave] = useState(null);
   const [activeProject, setActiveProject] = useState(null);
+
+  // Update last-active timestamp on any user activity
+  useEffect(() => {
+    const touch = () => LS.set("sf_last_active", Date.now());
+    touch(); // mark active on load
+    window.addEventListener("mousemove", touch);
+    window.addEventListener("keydown", touch);
+    // Check every minute if session has expired
+    const timer = setInterval(() => {
+      const lastActive = LS.get("sf_last_active", 0);
+      if (user && Date.now() - lastActive > SESSION_TIMEOUT) {
+        signOut();
+      }
+    }, 60000);
+    return () => {
+      window.removeEventListener("mousemove", touch);
+      window.removeEventListener("keydown", touch);
+      clearInterval(timer);
+    };
+  }, [user]);
+
+  // Also log out when the tab becomes hidden then visible again (switched away)
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        const lastActive = LS.get("sf_last_active", 0);
+        if (user && Date.now() - lastActive > SESSION_TIMEOUT) {
+          signOut();
+        }
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [user]);
 
   const enter = () => {
     if (!user) { setScreen("auth"); return; }
@@ -1809,11 +1863,13 @@ function Root() {
   const handleAuth = (u) => {
     setUser(u);
     LS.set("sf_current_user", u);
+    LS.set("sf_last_active", Date.now());
     if (!profile) { setScreen("setup"); return; }
     setScreen("dashboard");
   };
   const signOut = () => {
     LS.set("sf_current_user", null);
+    LS.set("sf_last_active", null);
     setUser(null);
     setActiveProject(null);
     setScreen("landing");
@@ -2410,7 +2466,14 @@ function ImportModal({ profile, onImport, onClose }) {
         </div>
 
         <div style={{ padding:"16px 24px", borderTop:"1px solid #EBEBEB", display:"flex", justifyContent:"space-between", alignItems:"center", gap:10 }}>
-          <p style={{ margin:0, fontSize:11, color:"#CCC" }}>{loading ? status : canImport ? "Ready to import" : "Upload a file or paste text above"}</p>
+          <div style={{ flex: 1 }}>
+            <p style={{ margin:0, fontSize:11, color: loading ? "#555" : "#CCC" }}>{loading ? status : canImport ? "Ready to import" : "Upload a file or paste text above"}</p>
+            {loading && (
+              <div style={{ marginTop: 6, height: 2, background: "#EBEBEB", borderRadius: 1, overflow: "hidden" }}>
+                <div style={{ height: "100%", background: "#000", borderRadius: 1, animation: "sf-progress 2s ease-in-out infinite" }} />
+              </div>
+            )}
+          </div>
           <div style={{ display:"flex", gap:10 }}>
             <button onClick={onClose} style={{ padding:"9px 20px", background:"none", border:"1px solid #D0D0D0", borderRadius:4, cursor:"pointer", fontFamily:"inherit", fontSize:13, color:"#666" }}>Cancel</button>
             <button onClick={doImport} disabled={loading || !canImport} style={{
@@ -3228,7 +3291,6 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
   const [showFormatGuide, setShowFormatGuide] = useState(false);
   const [wordCount, setWordCount] = useState(0);
   const [lastSaved, setLastSaved] = useState(null);
-  const [altDialogue, setAltDialogue] = useState(null);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [darkCanvas, setDarkCanvas] = useState(false);
   const [galleryOpen, setGalleryOpen] = useState(false);
