@@ -2100,138 +2100,227 @@ ${prompt}` }],
 // ─── SCRIPT IMPORT MODAL ──────────────────────────────────────────────────────
 function ImportModal({ profile, onImport, onClose }) {
   const [raw, setRaw] = useState("");
+  const [filePayload, setFilePayload] = useState(null);
+  const [fileName, setFileName] = useState("");
   const [fmt, setFmt] = useState(profile?.format || "film");
   const [genre, setGenre] = useState(profile?.genre || "Dark Fantasy");
   const [title, setTitle] = useState("Imported Script");
   const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const fileRef = useRef(null);
 
-  const handleFile = (e) => {
+  const readAsBase64 = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => resolve(e.target.result.split(",")[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+
+  const loadScript = (src) => new Promise((resolve, reject) => {
+    if (document.querySelector(`script[src="${src}"]`)) { resolve(); return; }
+    const s = document.createElement("script");
+    s.src = src; s.onload = resolve; s.onerror = reject;
+    document.head.appendChild(s);
+  });
+
+  const handleFile = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => setRaw(ev.target.result);
-    reader.readAsText(file);
     e.target.value = "";
+    setError(""); setStatus("Reading file...");
+    setFileName(file.name);
+    setTitle(file.name.replace(/\.[^.]+$/, "").replace(/[-_]/g, " ") || "Imported Script");
+
+    const ext = file.name.split(".").pop().toLowerCase();
+    const imageTypes = ["jpg","jpeg","png","gif","webp","bmp","tiff","heic"];
+    const textTypes = ["txt","fountain","fdx","md","rtf"];
+
+    if (imageTypes.includes(ext)) {
+      const b64 = await readAsBase64(file);
+      setFilePayload({ type: "image", base64: b64, mediaType: file.type || "image/jpeg" });
+      setRaw(""); setStatus("Image loaded — AI will read it on import.");
+    } else if (ext === "pdf") {
+      const b64 = await readAsBase64(file);
+      setFilePayload({ type: "pdf", base64: b64, mediaType: "application/pdf" });
+      setRaw(""); setStatus("PDF loaded — AI will extract text on import.");
+    } else if (ext === "docx") {
+      setStatus("Extracting text from DOCX...");
+      try {
+        await loadScript("https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js");
+        const arrayBuffer = await file.arrayBuffer();
+        const result = await window.mammoth.extractRawText({ arrayBuffer });
+        setRaw(result.value); setFilePayload(null);
+        setStatus(`DOCX extracted — ${result.value.split("\n").filter(l=>l.trim()).length} lines`);
+      } catch(err) {
+        setError("Could not read DOCX. Try saving as .txt from Word first.");
+        setStatus("");
+      }
+    } else if (textTypes.includes(ext)) {
+      const reader = new FileReader();
+      reader.onload = ev => {
+        setRaw(ev.target.result); setFilePayload(null);
+        setStatus(`Text loaded — ${ev.target.result.split("\n").filter(l=>l.trim()).length} lines`);
+      };
+      reader.readAsText(file);
+    } else {
+      // try as plain text
+      const reader = new FileReader();
+      reader.onload = ev => {
+        const text = ev.target.result;
+        if (typeof text === "string" && text.trim()) {
+          setRaw(text); setFilePayload(null);
+          setStatus(`File loaded — ${text.split("\n").filter(l=>l.trim()).length} lines`);
+        } else {
+          setError("Could not read this file. Try exporting as PDF, DOCX, or TXT first.");
+          setStatus("");
+        }
+      };
+      reader.onerror = () => setError("File could not be read.");
+      reader.readAsText(file);
+    }
   };
 
+  const canImport = raw.trim().length > 0 || filePayload !== null;
+
   const doImport = async () => {
-    if (!raw.trim()) return;
-    setLoading(true); setError("");
+    if (!canImport) return;
+    setLoading(true); setError(""); setStatus("AI is reading your script...");
     const fmt_label = FORMATS.find(f => f.id === fmt)?.label || "Script";
+    const _isArtifact = window.location.hostname.includes("claude.ai") || window.location.protocol === "blob:";
+    const _localKey = LS.get("sf_api_key", null);
+    const _apiUrl = (_isArtifact || _localKey) ? "https://api.anthropic.com/v1/messages" : "/api/chat";
+    const _headers = { "Content-Type": "application/json", ...(_localKey && !_isArtifact ? { "x-api-key": _localKey, "anthropic-version": "2023-06-01" } : {}) };
+
     try {
-      const _isArtifact = window.location.hostname.includes("claude.ai") || window.location.protocol === "blob:";
-      const _localKey = LS.get("sf_api_key", null);
-      const _apiUrl = (_isArtifact || _localKey) ? "https://api.anthropic.com/v1/messages" : "/api/chat";
-      const _headers = { "Content-Type": "application/json", ...(_localKey && !_isArtifact ? { "x-api-key": _localKey, "anthropic-version": "2023-06-01" } : {}) };
+      let messages;
+      if (filePayload?.type === "image") {
+        messages = [{ role: "user", content: [
+          { type: "image", source: { type: "base64", media_type: filePayload.mediaType, data: filePayload.base64 } },
+          { type: "text", text: `Extract ALL text from this script image and classify each line as: action, character, dialogue, location, direction, or note.\nFormat: ${fmt_label}. Genre: ${genre}.\nReturn ONLY valid JSON array of {text, mode} objects. No markdown. Omit blank lines.` }
+        ]}];
+      } else if (filePayload?.type === "pdf") {
+        messages = [{ role: "user", content: [
+          { type: "document", source: { type: "base64", media_type: "application/pdf", data: filePayload.base64 } },
+          { type: "text", text: `Extract ALL text from this script PDF and classify each line as: action, character, dialogue, location, direction, or note.\nFormat: ${fmt_label}. Genre: ${genre}.\nReturn ONLY valid JSON array of {text, mode} objects. No markdown. Omit blank lines.` }
+        ]}];
+      } else {
+        messages = [{ role: "user", content: `Format: ${fmt_label}. Genre: ${genre}.\n\nClassify every line of this script:\n\n${raw.slice(0, 8000)}` }];
+      }
+
       const res = await fetch(_apiUrl, {
-        method: "POST",
-        headers: _headers,
+        method: "POST", headers: _headers,
         body: JSON.stringify({
-          model: "claude-sonnet-4-5",
-          max_tokens: 4000,
-          system: `You are a script formatting engine. Classify each line of the provided script into one of these modes: action, character, dialogue, location, direction, note. Return ONLY valid JSON — an array of objects with keys "text" (string) and "mode" (string). No markdown, no preamble, no explanation. Empty lines should be omitted.`,
-          messages: [{ role: "user", content: `Format: ${fmt_label}. Genre: ${genre}.
-
-Classify every line:
-
-${raw.slice(0, 8000)}` }],
+          model: "claude-sonnet-4-5", max_tokens: 4000,
+          system: "You are a script formatting engine. Classify each line into modes: action, character, dialogue, location, direction, note. Return ONLY valid JSON — array of {text, mode} objects. No markdown, no preamble. Omit blank lines.",
+          messages,
         }),
       });
       const d = await res.json();
       const raw_text = d.content?.filter(b => b.type === "text").map(b => b.text).join("") || "[]";
       const parsed = JSON.parse(raw_text.replace(/```json|```/g, "").trim());
       const lines = parsed.map((l, i) => ({ id: Date.now() + i, text: l.text || "", mode: l.mode || "action" }));
-      if (lines.length === 0) { setError("No lines detected. Try pasting more text."); setLoading(false); return; }
+      if (lines.length === 0) { setError("No lines found. Try a different file."); setLoading(false); setStatus(""); return; }
+      setStatus(`Done — ${lines.length} lines imported.`);
       onImport({ title, format: fmt, genre, lines });
-    } catch(e) { setError("Import failed. Make sure the pasted text is readable script content."); }
+    } catch(err) {
+      setError("Import failed: " + (err.message || "unknown error"));
+      setStatus("");
+    }
     setLoading(false);
   };
 
+  const ACCEPTED = ".txt,.fountain,.fdx,.pdf,.doc,.docx,.md,.rtf,.jpg,.jpeg,.png,.gif,.webp,.bmp,.tiff,.heic";
+
   return (
-    <div style={{
-      position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 2000,
-      display: "flex", alignItems: "center", justifyContent: "center",
-    }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div style={{
-        width: 680, maxHeight: "90vh", background: "#FFF", borderRadius: 10,
-        display: "flex", flexDirection: "column", overflow: "hidden",
-        boxShadow: "0 8px 40px rgba(0,0,0,0.2)",
-      }}>
-        {/* Header */}
-        <div style={{ padding: "20px 24px", borderBottom: "1px solid #EBEBEB", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.4)", zIndex:2000, display:"flex", alignItems:"center", justifyContent:"center" }}
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{ width:700, maxHeight:"92vh", background:"#FFF", borderRadius:10, display:"flex", flexDirection:"column", overflow:"hidden", boxShadow:"0 8px 40px rgba(0,0,0,0.2)" }}>
+        <div style={{ padding:"20px 24px", borderBottom:"1px solid #EBEBEB", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
           <div>
-            <p style={{ margin: 0, fontSize: 15, fontWeight: 800, color: "#000" }}>Import Script</p>
-            <p style={{ margin: "3px 0 0", fontSize: 12, color: "#AAA" }}>Paste raw text — AI classifies every line automatically.</p>
+            <p style={{ margin:0, fontSize:15, fontWeight:800, color:"#000" }}>Import Script</p>
+            <p style={{ margin:"3px 0 0", fontSize:12, color:"#AAA" }}>Upload any file or paste text — AI reads and formats everything.</p>
           </div>
-          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 22, color: "#AAA", lineHeight: 1, padding: 4 }}>×</button>
+          <button onClick={onClose} style={{ background:"none", border:"none", cursor:"pointer", fontSize:22, color:"#AAA", lineHeight:1, padding:4 }}>×</button>
         </div>
 
-        <div style={{ flex: 1, overflowY: "auto", padding: 24, display: "flex", flexDirection: "column", gap: 16 }}>
-          {/* Meta row */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-            <div>
-              <label style={css.label}>Project title</label>
-              <input value={title} onChange={e => setTitle(e.target.value)} style={css.input} />
-            </div>
-            <div>
-              <label style={css.label}>Format</label>
-              <select value={fmt} onChange={e => setFmt(e.target.value)} style={{ ...css.input, fontSize: 12 }}>
+        <div style={{ flex:1, overflowY:"auto", padding:24, display:"flex", flexDirection:"column", gap:16 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12 }}>
+            <div><label style={css.label}>Project title</label><input value={title} onChange={e => setTitle(e.target.value)} style={css.input} /></div>
+            <div><label style={css.label}>Format</label>
+              <select value={fmt} onChange={e => setFmt(e.target.value)} style={{ ...css.input, fontSize:12 }}>
                 {FORMATS.map(f => <option key={f.id} value={f.id}>{f.label}</option>)}
               </select>
             </div>
-            <div>
-              <label style={css.label}>Genre</label>
-              <select value={genre} onChange={e => setGenre(e.target.value)} style={{ ...css.input, fontSize: 12 }}>
+            <div><label style={css.label}>Genre</label>
+              <select value={genre} onChange={e => setGenre(e.target.value)} style={{ ...css.input, fontSize:12 }}>
                 {GENRES.map(g => <option key={g}>{g}</option>)}
               </select>
             </div>
           </div>
 
-          {/* Paste area */}
-          <div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-              <label style={css.label}>Script text</label>
-              <button onClick={() => fileRef.current?.click()} style={{
-                background: "none", border: "1px solid #D0D0D0", borderRadius: 3,
-                padding: "3px 10px", fontSize: 11, color: "#666", cursor: "pointer", fontFamily: "inherit",
-              }}>Upload .txt / .fountain</button>
-              <input ref={fileRef} type="file" accept=".txt,.fountain,.fdx" style={{ display: "none" }} onChange={handleFile} />
-            </div>
-            <textarea
-              value={raw}
-              onChange={e => setRaw(e.target.value)}
-              placeholder={"Paste your script here...\n\nFADE IN:\n\nEXT. CITY — NIGHT\n\nKAEL moves through the dark...\n\n                    KAEL\n          I know what I saw."}
-              style={{
-                ...css.input, resize: "none", height: 280,
-                fontFamily: "'Courier New', monospace", fontSize: 12,
-                lineHeight: 1.7, color: "#333",
-              }}
-            />
-            <p style={{ margin: "6px 0 0", fontSize: 11, color: "#CCC" }}>
-              {raw.trim() ? `${raw.trim().split('\n').filter(l => l.trim()).length} lines detected` : "No text yet"}
+          {/* Drop zone */}
+          <div
+            onDragOver={e => { e.preventDefault(); e.currentTarget.style.borderColor="#000"; }}
+            onDragLeave={e => { e.currentTarget.style.borderColor="#D0D0D0"; }}
+            onDrop={e => {
+              e.preventDefault(); e.currentTarget.style.borderColor="#D0D0D0";
+              const file = e.dataTransfer.files?.[0];
+              if (file) { const dt = new DataTransfer(); dt.items.add(file); fileRef.current.files = dt.files; handleFile({ target: fileRef.current }); }
+            }}
+            onClick={() => fileRef.current?.click()}
+            style={{ border:"1px dashed #D0D0D0", borderRadius:6, padding:"20px 24px", textAlign:"center", cursor:"pointer", transition:"border-color 0.15s", background: fileName ? "#FAFAFA" : "#FFF" }}
+          >
+            {fileName ? (
+              <div>
+                <p style={{ margin:"0 0 4px", fontSize:13, fontWeight:700, color:"#000" }}>📄 {fileName}</p>
+                <p style={{ margin:0, fontSize:11, color:"#AAA" }}>{status}</p>
+              </div>
+            ) : (
+              <div>
+                <p style={{ margin:"0 0 6px", fontSize:13, color:"#555" }}>Drop file here or click to browse</p>
+                <p style={{ margin:0, fontSize:11, color:"#BBB" }}>PDF · DOCX · TXT · Fountain · JPG · PNG · and more</p>
+              </div>
+            )}
+            <input ref={fileRef} type="file" accept={ACCEPTED} style={{ display:"none" }} onChange={handleFile} />
+          </div>
+
+          <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+            <div style={{ flex:1, height:1, background:"#EBEBEB" }} />
+            <span style={{ fontSize:10, color:"#CCC", fontWeight:600, textTransform:"uppercase", letterSpacing:"0.1em" }}>or paste text</span>
+            <div style={{ flex:1, height:1, background:"#EBEBEB" }} />
+          </div>
+
+          <textarea value={raw}
+            onChange={e => { setRaw(e.target.value); setFileName(""); setFilePayload(null); setStatus(""); }}
+            placeholder={"Paste your script here...\n\nFADE IN:\n\nEXT. CITY — NIGHT\n\nKAEL moves through the dark...\n\n                    KAEL\n          I know what I saw."}
+            style={{ ...css.input, resize:"none", height:180, fontFamily:"'Courier New',monospace", fontSize:12, lineHeight:1.7, color:"#333" }}
+          />
+
+          <div style={{ background:"#FAFAFA", border:"1px solid #EBEBEB", borderRadius:4, padding:"10px 14px" }}>
+            <p style={{ margin:0, fontSize:11, color:"#888", lineHeight:1.6 }}>
+              <strong style={{ color:"#555" }}>Google Docs:</strong> File → Download → Microsoft Word (.docx), then upload here.
             </p>
           </div>
 
-          {error && <p style={{ fontSize: 12, color: "#888", margin: 0 }}>{error}</p>}
+          {error && <p style={{ fontSize:12, color:"#888", margin:0 }}>{error}</p>}
         </div>
 
-        {/* Footer */}
-        <div style={{ padding: "16px 24px", borderTop: "1px solid #EBEBEB", display: "flex", justifyContent: "flex-end", gap: 10 }}>
-          <button onClick={onClose} style={{ padding: "9px 20px", background: "none", border: "1px solid #D0D0D0", borderRadius: 4, cursor: "pointer", fontFamily: "inherit", fontSize: 13, color: "#666" }}>Cancel</button>
-          <button onClick={doImport} disabled={loading || !raw.trim()} style={{
-            padding: "9px 24px", background: "#000", color: "#FFF", border: "none",
-            borderRadius: 4, cursor: loading || !raw.trim() ? "not-allowed" : "pointer",
-            fontFamily: "inherit", fontWeight: 700, fontSize: 13,
-            opacity: loading || !raw.trim() ? 0.4 : 1,
-          }}>{loading ? "Classifying lines..." : "Import & Format"}</button>
+        <div style={{ padding:"16px 24px", borderTop:"1px solid #EBEBEB", display:"flex", justifyContent:"space-between", alignItems:"center", gap:10 }}>
+          <p style={{ margin:0, fontSize:11, color:"#CCC" }}>{loading ? status : canImport ? "Ready to import" : "Upload a file or paste text above"}</p>
+          <div style={{ display:"flex", gap:10 }}>
+            <button onClick={onClose} style={{ padding:"9px 20px", background:"none", border:"1px solid #D0D0D0", borderRadius:4, cursor:"pointer", fontFamily:"inherit", fontSize:13, color:"#666" }}>Cancel</button>
+            <button onClick={doImport} disabled={loading || !canImport} style={{
+              padding:"9px 24px", background:"#000", color:"#FFF", border:"none", borderRadius:4,
+              cursor: loading || !canImport ? "not-allowed" : "pointer",
+              fontFamily:"inherit", fontWeight:700, fontSize:13, opacity: loading || !canImport ? 0.4 : 1,
+            }}>{loading ? "Importing..." : "Import & Format"}</button>
+          </div>
         </div>
       </div>
     </div>
   );
 }
-
 
 // ─── NOTES PANEL (Feature 4) ─────────────────────────────────────────────────
 function NotesPanel({ notes, onChange }) {
