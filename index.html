@@ -65,10 +65,31 @@ const FORMATS = [
 ];
 
 const GENRES = [
-  "Action / Adventure","Dark Fantasy","Sci-Fi","Horror","Romance",
-  "Mystery / Thriller","Slice of Life","Coming of Age","Psychological",
-  "Shonen","Shojo","Seinen","Isekai","Martial Arts","Supernatural",
-  "Post-Apocalyptic","Crime Noir","Political Drama","Historical","Comedy",
+  // Drama & General
+  "Drama","Comedy","Tragicomedy","Satire","Dark Comedy","Romantic Comedy",
+  // Action & Thriller  
+  "Action / Adventure","Thriller","Spy / Espionage","Heist","Legal Thriller","Political Thriller",
+  // Crime
+  "Crime","Crime Noir","Crime Drama","Detective","Gangster","True Crime",
+  // Horror & Dark
+  "Horror","Psychological Horror","Supernatural Horror","Slasher","Body Horror","Gothic",
+  // Sci-Fi & Fantasy
+  "Sci-Fi","Hard Sci-Fi","Cyberpunk","Space Opera","Dark Fantasy","High Fantasy","Urban Fantasy","Supernatural",
+  // Romance
+  "Romance","Romantic Drama","Period Romance",
+  // Mystery
+  "Mystery / Thriller","Whodunit","Noir",
+  // Historical & Period
+  "Historical","Period Drama","War","Epic",
+  // Family & Youth
+  "Coming of Age","Family","Kids","Teen Drama","Slice of Life",
+  // Animation styles
+  "Shonen","Shojo","Seinen","Josei","Isekai","Mecha","Martial Arts",
+  // Specialized
+  "Post-Apocalyptic","Dystopian","Western","Musical","Sports","Biopic",
+  "Political Drama","Social Drama","Religious / Spiritual","Philosophical",
+  // Experimental
+  "Experimental","Anthology","Docudrama","Mockumentary",
 ];
 
 // ─── INLINE STYLES ────────────────────────────────────────────────────────────
@@ -296,7 +317,7 @@ function ContextMenu({ x, y, selectedText, onAddToCase, onClose }) {
 // ─── SMART EDITOR ─────────────────────────────────────────────────────────────
 // Uses textarea-per-line. React only owns mode + line structure.
 // Text value is owned entirely by the DOM (uncontrolled) — cursor never jumps.
-function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, onPageChange, focusMode, scrollRef, darkCanvas }) {
+function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, onPageChange, focusMode, scrollRef, darkCanvas, onCharFocus }) {
   const [lines, setLines] = useState(() =>
     project?.lines?.length ? project.lines : [{ id: Date.now(), text: "", mode: "action" }]
   );
@@ -716,25 +737,29 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
                 {line.notes?.length > 0 && (
                   <span style={{ position: "absolute", left: -20, top: 4, fontSize: 9, color: "#AAA", fontWeight: 700, cursor: "default", userSelect: "none" }} title={line.notes.map(n => n.text).join(" / ")}>¹</span>
                 )}
-                {/* Character photo dot — shows in script next to character name lines */}
+                {/* Character photo dot — hover to preview */}
                 {line.mode === "character" && (() => {
                   const charName = (textCache.current[idx] || line.text || "").trim().toUpperCase();
                   const charData = cast.find(c => c.name.toUpperCase() === charName);
                   if (!charData?.image) return null;
                   return (
-                    <div style={{ position: "absolute", right: -24, top: 6, zIndex: 50 }}
-                      onMouseEnter={e => { e.currentTarget.querySelector(".char-preview").style.display = "block"; }}
-                      onMouseLeave={e => { e.currentTarget.querySelector(".char-preview").style.display = "none"; }}
+                    <div style={{ position: "absolute", right: -20, top: 4, zIndex: 50 }}
+                      onMouseEnter={e => {
+                        const preview = document.getElementById("char-preview-global");
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        if (preview) {
+                          preview.src = charData.image;
+                          preview.style.display = "block";
+                          preview.style.top = (rect.top - 60) + "px";
+                          preview.style.left = (rect.left - 120) + "px";
+                        }
+                      }}
+                      onMouseLeave={() => {
+                        const preview = document.getElementById("char-preview-global");
+                        if (preview) preview.style.display = "none";
+                      }}
                     >
-                      <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#000", opacity: 0.2, cursor: "pointer" }} />
-                      <div className="char-preview" style={{
-                        display: "none", position: "fixed", zIndex: 900,
-                        width: 100, height: 100, borderRadius: 6, overflow: "hidden",
-                        border: "1px solid #D0D0D0", boxShadow: "0 4px 16px rgba(0,0,0,0.15)",
-                        transform: "translateX(-110px) translateY(-40px)",
-                      }}>
-                        <img src={charData.image} alt={charData.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                      </div>
+                      <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#000", opacity: 0.15, cursor: "pointer" }} />
                     </div>
                   );
                 })()}
@@ -754,7 +779,7 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
                     autoCorrect="on"
                     autoCapitalize="sentences"
                     autoComplete="off"
-                    onFocus={() => { setCurLine(idx); showPill(refs.current[idx]); updateCounter(idx); }}
+                    onFocus={() => { setCurLine(idx); showPill(refs.current[idx]); updateCounter(idx); if (onCharFocus && lines[idx]?.mode === "character") onCharFocus((textCache.current[idx] || lines[idx]?.text || "").trim()); else if (onCharFocus) onCharFocus(""); }}
                     onChange={e => { autoGrow(e.target); const w = wrapperRefs.current[idx]; if (w) lineHeights.current[idx] = w.offsetHeight; handleChange(e, idx); }}
                     onKeyDown={e => handleKeyDown(e, idx)}
                     onContextMenu={e => handleContextMenu(e, idx)}
@@ -812,6 +837,15 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
           onClose={() => setInlineNote(null)}
         />
       )}
+
+      {/* Global character photo preview — positioned by JS on hover */}
+      <img id="char-preview-global" src="" alt="" style={{
+        display: "none", position: "fixed", zIndex: 1200,
+        width: 110, height: 110, objectFit: "cover",
+        borderRadius: 6, border: "1px solid #D0D0D0",
+        boxShadow: "0 4px 16px rgba(0,0,0,0.18)",
+        pointerEvents: "none",
+      }} />
 
       <style>{`
         textarea::placeholder { color: #CCCCCC; font-style: italic; }
@@ -2108,6 +2142,8 @@ function ImportModal({ profile, onImport, onClose }) {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
+  const [pendingLines, setPendingLines] = useState(null);
+  const [uncertainLines, setUncertainLines] = useState([]);
   const fileRef = useRef(null);
 
   const readAsBase64 = (file) => new Promise((resolve, reject) => {
@@ -2212,15 +2248,24 @@ function ImportModal({ profile, onImport, onClose }) {
         method: "POST", headers: _headers,
         body: JSON.stringify({
           model: "claude-sonnet-4-5", max_tokens: 4000,
-          system: "You are a script formatting engine. Classify each line into modes: action, character, dialogue, location, direction, note. Return ONLY valid JSON — array of {text, mode} objects. No markdown, no preamble. Omit blank lines.",
+          system: "You are a script formatting engine. Classify each line into modes: action, character, dialogue, location, direction, note. For lines you are less than 90% confident about, add a \"uncertain\": true field. Return ONLY valid JSON — array of {text, mode, uncertain?} objects. No markdown, no preamble. Omit blank lines.",
           messages,
         }),
       });
       const d = await res.json();
       const raw_text = d.content?.filter(b => b.type === "text").map(b => b.text).join("") || "[]";
       const parsed = JSON.parse(raw_text.replace(/```json|```/g, "").trim());
+      if (parsed.length === 0) { setError("No lines found. Try a different file."); setLoading(false); setStatus(""); return; }
+      const uncertain = parsed.filter(l => l.uncertain);
+      if (uncertain.length > 0) {
+        // Show confirmation for uncertain lines
+        setPendingLines(parsed);
+        setUncertainLines(uncertain);
+        setLoading(false);
+        setStatus(`${parsed.length} lines classified. ${uncertain.length} need your review.`);
+        return;
+      }
       const lines = parsed.map((l, i) => ({ id: Date.now() + i, text: l.text || "", mode: l.mode || "action" }));
-      if (lines.length === 0) { setError("No lines found. Try a different file."); setLoading(false); setStatus(""); return; }
       setStatus(`Done — ${lines.length} lines imported.`);
       onImport({ title, format: fmt, genre, lines });
     } catch(err) {
@@ -2258,6 +2303,64 @@ function ImportModal({ profile, onImport, onClose }) {
               </select>
             </div>
           </div>
+
+          {/* Uncertain lines review */}
+          {pendingLines && uncertainLines.length > 0 && (
+            <div style={{ background: "#FAFAFA", border: "1px solid #E0E0E0", borderRadius: 6, padding: 16 }}>
+              <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 700, color: "#000" }}>Review {uncertainLines.length} uncertain line{uncertainLines.length !== 1 ? "s" : ""}</p>
+              <p style={{ margin: "0 0 14px", fontSize: 12, color: "#AAA" }}>The AI wasn't sure about these. Pick the correct mode for each.</p>
+              {uncertainLines.map((line, i) => (
+                <div key={i} style={{ marginBottom: 12, padding: "10px 12px", background: "#FFF", border: "1px solid #EBEBEB", borderRadius: 4 }}>
+                  <p style={{ margin: "0 0 8px", fontSize: 12, fontFamily: "'Courier New', monospace", color: "#333" }}>{line.text}</p>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                    {["action","character","dialogue","location","direction","note"].map(mode => (
+                      <button key={mode} onClick={() => {
+                        const updated = pendingLines.map(l => l === line ? { ...l, mode, uncertain: false } : l);
+                        setPendingLines(updated);
+                        const stillUncertain = updated.filter(l => l.uncertain);
+                        setUncertainLines(stillUncertain);
+                      }} style={{
+                        padding: "4px 10px", borderRadius: 3, cursor: "pointer", fontFamily: "inherit",
+                        fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em",
+                        background: line.mode === mode ? "#000" : "#F4F4F4",
+                        color: line.mode === mode ? "#FFF" : "#666",
+                        border: `1px solid ${line.mode === mode ? "#000" : "#E0E0E0"}`,
+                      }}>{mode}</button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              <button onClick={() => {
+                const lines = pendingLines.map((l, i) => ({ id: Date.now() + i, text: l.text || "", mode: l.mode || "action" }));
+                onImport({ title, format: fmt, genre, lines });
+              }} style={{ width: "100%", padding: "9px", background: "#000", color: "#FFF", border: "none", borderRadius: 4, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 13, marginTop: 8 }}>
+                Looks good — Import
+              </button>
+            </div>
+          )}
+
+          {/* Uncertain lines review */}
+          {pendingLines && uncertainLines.length > 0 && (
+            <div style={{ background: "#FAFAFA", border: "1px solid #E0E0E0", borderRadius: 6, padding: 16 }}>
+              <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 700, color: "#000" }}>Review {uncertainLines.length} uncertain line{uncertainLines.length !== 1 ? "s" : ""}</p>
+              <p style={{ margin: "0 0 14px", fontSize: 12, color: "#AAA" }}>The AI wasn't sure about these. Pick the correct mode for each.</p>
+              {uncertainLines.map((line, i) => (
+                <div key={i} style={{ marginBottom: 12, padding: "10px 12px", background: "#FFF", border: "1px solid #EBEBEB", borderRadius: 4 }}>
+                  <p style={{ margin: "0 0 8px", fontSize: 12, fontFamily: "'Courier New', monospace", color: "#333" }}>{line.text}</p>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                    {["action","character","dialogue","location","direction","note"].map(mode => (
+                      <button key={mode} onClick={() => {
+                        const updated = pendingLines.map(l => l === line ? { ...l, mode, uncertain: false } : l);
+                        setPendingLines(updated);
+                        setUncertainLines(updated.filter(l => l.uncertain));
+                      }} style={{ padding: "4px 10px", borderRadius: 3, cursor: "pointer", fontFamily: "inherit", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", background: line.mode === mode ? "#000" : "#F4F4F4", color: line.mode === mode ? "#FFF" : "#666", border: `1px solid ${line.mode === mode ? "#000" : "#E0E0E0"}` }}>{mode}</button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              <button onClick={() => { const ls = pendingLines.map((l,i) => ({ id: Date.now()+i, text: l.text||"", mode: l.mode||"action" })); onImport({ title, format: fmt, genre, lines: ls }); }} style={{ width:"100%", padding:"9px", background:"#000", color:"#FFF", border:"none", borderRadius:4, cursor:"pointer", fontFamily:"inherit", fontWeight:700, fontSize:13, marginTop:8 }}>Looks good — Import</button>
+            </div>
+          )}
 
           {/* Drop zone */}
           <div
@@ -2872,6 +2975,67 @@ function ApiKeyField() {
 }
 
 
+
+// ─── CHARACTER CONTEXT PANEL ──────────────────────────────────────────────────
+function CharacterContextPanel({ cast, currentCharName, onClose }) {
+  const char = cast.find(c => c.name.toUpperCase() === (currentCharName || "").toUpperCase());
+
+  return (
+    <div style={{ width: 200, minWidth: 200, borderLeft: "1px solid #EBEBEB", background: "#FAFAFA", display: "flex", flexDirection: "column", flexShrink: 0 }}>
+      <div style={{ padding: "12px 14px 10px", borderBottom: "1px solid #EBEBEB", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+        <span style={{ fontSize: 9, fontWeight: 800, color: "#AAA", letterSpacing: "0.14em", textTransform: "uppercase" }}>Character</span>
+        <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "#CCC", fontSize: 14, padding: 0 }}>×</button>
+      </div>
+
+      <div style={{ flex: 1, overflowY: "auto", padding: "14px" }}>
+        {!char ? (
+          <div style={{ textAlign: "center", paddingTop: 40, color: "#CCC" }}>
+            <p style={{ fontSize: 12, margin: "0 0 6px" }}>No character selected.</p>
+            <p style={{ fontSize: 11, margin: 0, lineHeight: 1.6 }}>Click a character name line in the script to see their info here.</p>
+          </div>
+        ) : (
+          <>
+            {/* Photo */}
+            <div style={{ width: "100%", aspectRatio: "1", borderRadius: 6, overflow: "hidden", background: "#EBEBEB", marginBottom: 12, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              {char.image
+                ? <img src={char.image} alt={char.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                : <span style={{ fontSize: 32, color: "#CCC", fontWeight: 700 }}>{char.name[0]}</span>
+              }
+            </div>
+            {/* Name + role */}
+            <p style={{ margin: "0 0 2px", fontSize: 13, fontWeight: 800, color: "#000", letterSpacing: "0.04em" }}>{char.name}</p>
+            <p style={{ margin: "0 0 14px", fontSize: 11, color: "#AAA" }}>{char.role}</p>
+            {/* Quick stats */}
+            {[
+              char.age && ["Age", char.age],
+              char.gender && ["Gender", char.gender],
+              char.voice && ["Voice", char.voice],
+              char.accent && ["Accent", char.accent],
+            ].filter(Boolean).map(([k, v]) => (
+              <div key={k} style={{ marginBottom: 8 }}>
+                <span style={{ fontSize: 9, fontWeight: 800, color: "#CCC", letterSpacing: "0.1em", textTransform: "uppercase" }}>{k}</span>
+                <p style={{ margin: "2px 0 0", fontSize: 11, color: "#555" }}>{v}</p>
+              </div>
+            ))}
+            {char.motivation && (
+              <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #EBEBEB" }}>
+                <span style={{ fontSize: 9, fontWeight: 800, color: "#CCC", letterSpacing: "0.1em", textTransform: "uppercase" }}>Motivation</span>
+                <p style={{ margin: "2px 0 0", fontSize: 11, color: "#555", lineHeight: 1.5 }}>{char.motivation}</p>
+              </div>
+            )}
+            {char.arc && (
+              <div style={{ marginTop: 10 }}>
+                <span style={{ fontSize: 9, fontWeight: 800, color: "#CCC", letterSpacing: "0.1em", textTransform: "uppercase" }}>Arc</span>
+                <p style={{ margin: "2px 0 0", fontSize: 11, color: "#555", lineHeight: 1.5 }}>{char.arc}</p>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── SCENE GALLERY PANEL ──────────────────────────────────────────────────────
 function SceneGallery({ project, onUpdate, currentPage }) {
   const scenes = project?.sceneGallery || [];
@@ -3068,6 +3232,8 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [darkCanvas, setDarkCanvas] = useState(false);
   const [galleryOpen, setGalleryOpen] = useState(false);
+  const [charPanelOpen, setCharPanelOpen] = useState(false);
+  const [currentCharName, setCurrentCharName] = useState("");
 
   const active = projects.find(p => p.id === activeId) || projects[0] || null;
 
@@ -3324,6 +3490,13 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
                 color: galleryOpen ? "#FFF" : "#555",
                 fontSize: 12, cursor: "pointer", fontFamily: "inherit",
               }}>⬚ Gallery</button>
+              <button onClick={() => setCharPanelOpen(o => !o)} title="Character Panel" style={{
+                padding: "6px 10px", borderRadius: 4, flexShrink: 0,
+                border: `1px solid ${charPanelOpen ? "#000" : "#D0D0D0"}`,
+                background: charPanelOpen ? "#000" : "#FAFAFA",
+                color: charPanelOpen ? "#FFF" : "#555",
+                fontSize: 12, cursor: "pointer", fontFamily: "inherit",
+              }}>◉ Cast</button>
               <button onClick={() => setGalleryOpen(o => !o)} title="Scene Gallery" style={{
                 padding: "6px 10px", borderRadius: 4, flexShrink: 0,
                 border: `1px solid ${galleryOpen ? "#000" : "#D0D0D0"}`,
@@ -3331,6 +3504,13 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
                 color: galleryOpen ? "#FFF" : "#555",
                 fontSize: 12, cursor: "pointer", fontFamily: "inherit",
               }}>⬚ Gallery</button>
+              <button onClick={() => setCharPanelOpen(o => !o)} title="Character Panel" style={{
+                padding: "6px 10px", borderRadius: 4, flexShrink: 0,
+                border: `1px solid ${charPanelOpen ? "#000" : "#D0D0D0"}`,
+                background: charPanelOpen ? "#000" : "#FAFAFA",
+                color: charPanelOpen ? "#FFF" : "#555",
+                fontSize: 12, cursor: "pointer", fontFamily: "inherit",
+              }}>◉ Cast</button>
             </>
           )}
           {nav !== "write" && (
@@ -3345,7 +3525,7 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
           {/* Editor always shows for write AND notes (notes is a sidebar beside it) */}
           {(nav === "write" || nav === "notes") && (
             active ? (
-              <SmartEditor project={active} cast={cast} onUpdateContent={updateLines} onAddCharacter={addCharacter} format={active.format} onPageChange={(cur,total)=>setPageInfo({cur,total})} focusMode={focusMode} scrollRef={sceneNavRef} darkCanvas={darkCanvas} />
+              <SmartEditor project={active} cast={cast} onUpdateContent={updateLines} onAddCharacter={addCharacter} format={active.format} onPageChange={(cur,total)=>setPageInfo({cur,total})} focusMode={focusMode} scrollRef={sceneNavRef} darkCanvas={darkCanvas} onCharFocus={setCurrentCharName} />
             ) : (
               <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16 }}>
                 <p style={{ fontSize: 16, color: "#AAA" }}>No project open</p>
@@ -3354,12 +3534,30 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
             )
           )}
 
+          {/* Character Context Panel — right sidebar */}
+          {charPanelOpen && nav === "write" && (
+            <CharacterContextPanel
+              cast={cast}
+              currentCharName={currentCharName}
+              onClose={() => setCharPanelOpen(false)}
+            />
+          )}
+
           {/* Scene Gallery — right sidebar beside editor */}
           {galleryOpen && nav === "write" && active && (
             <SceneGallery
               project={active}
               onUpdate={updateSceneGallery}
               currentPage={pageInfo.cur}
+            />
+          )}
+
+          {/* Character Context Panel */}
+          {charPanelOpen && nav === "write" && (
+            <CharacterContextPanel
+              cast={cast}
+              currentCharName={currentCharName}
+              onClose={() => setCharPanelOpen(false)}
             />
           )}
 
