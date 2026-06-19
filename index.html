@@ -698,12 +698,12 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
   };
 
   return (
-    <div ref={containerRef} style={{ flex: 1, width: 0, minWidth: 0, position: "relative", overflowY: "auto", background: darkCanvas ? "#1A1A1A" : "#D8D8D8", padding: "40px 0 80px" }}>
+    <div ref={containerRef} style={{ flex: 1, position: "relative", overflowY: "auto", background: darkCanvas ? "#1A1A1A" : "#D8D8D8", padding: "40px 0 80px" }}>
       {/* Mode pill */}
       <ModePill mode={lines[curLine]?.mode || "action"} visible={pillVisible} x={pillPos.x} y={pillPos.y} />
 
       {/* Page canvas — 816px = 8.5" @ 96dpi, always centered */}
-      <div style={{ width: 816, maxWidth: "100%", margin: "0 auto", background: "#FFFFFF", boxShadow: darkCanvas ? "0 2px 32px rgba(0,0,0,0.5)" : "0 2px 16px rgba(0,0,0,0.18)" }}>
+      <div style={{ width: 816, margin: "0 auto", background: "#FFFFFF", boxShadow: darkCanvas ? "0 2px 32px rgba(0,0,0,0.5)" : "0 2px 16px rgba(0,0,0,0.18)" }}>
         {/* Top page margin */}
         <div style={{ height: 96 }} />
 
@@ -3575,9 +3575,9 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
             )
           )}
 
-          {/* Right sidebars — fixed width, never shrink the editor */}
+          {/* Right panel overlays — fixed position so they NEVER affect editor width */}
           {(charPanelOpen || galleryOpen) && nav === "write" && (
-            <div style={{ display: "flex", flexShrink: 0 }}>
+            <div style={{ position: "fixed", top: 48, right: 0, bottom: 32, display: "flex", zIndex: 300, boxShadow: "-4px 0 20px rgba(0,0,0,0.08)" }}>
               {charPanelOpen && (
                 <CharacterContextPanel
                   cast={cast}
