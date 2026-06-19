@@ -3497,29 +3497,8 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
                 color: charPanelOpen ? "#FFF" : "#555",
                 fontSize: 12, cursor: "pointer", fontFamily: "inherit",
               }}>◉ Cast</button>
-              <button onClick={() => setGalleryOpen(o => !o)} title="Scene Gallery" style={{
-                padding: "6px 10px", borderRadius: 4, flexShrink: 0,
-                border: `1px solid ${galleryOpen ? "#000" : "#D0D0D0"}`,
-                background: galleryOpen ? "#000" : "#FAFAFA",
-                color: galleryOpen ? "#FFF" : "#555",
-                fontSize: 12, cursor: "pointer", fontFamily: "inherit",
-              }}>⬚ Gallery</button>
-              <button onClick={() => setCharPanelOpen(o => !o)} title="Character Panel" style={{
-                padding: "6px 10px", borderRadius: 4, flexShrink: 0,
-                border: `1px solid ${charPanelOpen ? "#000" : "#D0D0D0"}`,
-                background: charPanelOpen ? "#000" : "#FAFAFA",
-                color: charPanelOpen ? "#FFF" : "#555",
-                fontSize: 12, cursor: "pointer", fontFamily: "inherit",
-              }}>◉ Cast</button>
             </>
           )}
-          {nav !== "write" && (
-            <p style={{ margin: 0, fontSize: 14, fontWeight: 800, color: "#000", letterSpacing: "0.04em", textTransform: "uppercase" }}>
-              {NAV_ITEMS.find(n => n.id === nav)?.label}
-            </p>
-          )}
-        </div>
-
         {/* ── CONTENT ── */}
         <div style={{ flex: 1, overflow: "hidden", display: "flex" }}>
           {/* Editor always shows for write AND notes (notes is a sidebar beside it) */}
@@ -3551,25 +3530,6 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
               currentPage={pageInfo.cur}
             />
           )}
-
-          {/* Character Context Panel */}
-          {charPanelOpen && nav === "write" && (
-            <CharacterContextPanel
-              cast={cast}
-              currentCharName={currentCharName}
-              onClose={() => setCharPanelOpen(false)}
-            />
-          )}
-
-          {/* Scene Gallery — right sidebar beside editor */}
-          {galleryOpen && nav === "write" && active && (
-            <SceneGallery
-              project={active}
-              onUpdate={updateSceneGallery}
-              currentPage={pageInfo.cur}
-            />
-          )}
-
           {/* Notes sidebar — slides in beside the editor */}
           {nav === "notes" && (
             <NotesPanel
@@ -3666,7 +3626,6 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
           <button onClick={() => setShowFormatGuide(o => !o)} title="Format Guide (?)" style={{ background:"none", border:"1px solid #E0E0E0", borderRadius:3, padding:"2px 8px", fontSize:10, cursor:"pointer", color:"#888", fontFamily:"inherit" }}>?</button>
           <button onClick={() => setShortcutsOpen(o => !o)} title="Shortcuts ⌘/" style={{ background:"none", border:"1px solid #E0E0E0", borderRadius:3, padding:"2px 8px", fontSize:10, cursor:"pointer", color:"#888", fontFamily:"inherit" }}>⌘/</button>
           <button onClick={() => setFocusMode(o => !o)} title="Focus Mode ⌘F" style={{ background:"none", border:"1px solid #E0E0E0", borderRadius:3, padding:"2px 8px", fontSize:10, cursor:"pointer", color:"#888", fontFamily:"inherit" }}>⌘F</button>
-          <button onClick={() => setDarkCanvas(o => !o)} title="Toggle canvas" style={{ background: darkCanvas ? "#333" : "none", border:"1px solid #E0E0E0", borderRadius:3, padding:"2px 8px", fontSize:10, cursor:"pointer", color: darkCanvas ? "#FFF" : "#888", fontFamily:"inherit" }}>&#9680;</button>
           <button onClick={() => setDarkCanvas(o => !o)} title="Toggle canvas color" style={{ background: darkCanvas ? "#333" : "none", border:"1px solid #E0E0E0", borderRadius:3, padding:"2px 8px", fontSize:10, cursor:"pointer", color: darkCanvas ? "#FFF" : "#888", fontFamily:"inherit" }}>◐</button>
         </div>
       </div>
@@ -3675,7 +3634,7 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
       {shortcutsOpen && <ShortcutsOverlay onClose={() => setShortcutsOpen(false)} />}
 
       {/* ── FORMAT GUIDE ── */}
-      {showFormatGuide && <FormatGuide format={active?.format || "film"} onClose={() => setShowFormatGuide(false)} />}
+    </div>
     </div>
   );
 }    const container = document.getElementById('root');
