@@ -3561,6 +3561,7 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
               }}>◉ Cast</button>
             </>
           )}
+        </div>
         {/* ── CONTENT ── */}
         <div style={{ flex: 1, overflow: "hidden", display: "flex", minWidth: 0 }}>
           {/* Editor always shows for write AND notes (notes is a sidebar beside it) */}
@@ -3655,7 +3656,6 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
             </div>
           )}
         </div>
-      </div>
 
       {/* ── IMPORT MODAL ── */}
       {importOpen && <ImportModal profile={profile} onImport={importScript} onClose={() => setImportOpen(false)} />}
