@@ -399,21 +399,6 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
     if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [curLine, focusMode]);
 
-  // ── expose scroll-to-line via scrollRef ──
-  useEffect(() => {
-    if (scrollRef) scrollRef.current = (idx) => {
-      const el = wrapperRefs.current[idx];
-      if (el) { el.scrollIntoView({ behavior:"smooth", block:"center" }); refs.current[idx]?.focus(); }
-    };
-  });
-
-  // ── typewriter scroll: keep cursor centered in focus mode ──
-  useEffect(() => {
-    if (!focusMode) return;
-    const el = wrapperRefs.current[curLine];
-    if (el) el.scrollIntoView({ behavior:"smooth", block:"center" });
-  }, [curLine, focusMode]);
-
   // ── debounced sync to parent (300 ms after last keystroke) ──
   const scheduleSync = () => {
     clearTimeout(syncTimerRef.current);
@@ -447,6 +432,21 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
         el.setSelectionRange(len, len);
       }
     }, 0);
+  };
+
+  // ── delete line at idx, reindex textCache, move focus to previous line ──
+  // (shared by Enter-on-blank-line and Backspace-on-empty-line — same operation, two triggers)
+  const deleteLineAt = (idx) => {
+    setLines(prev => {
+      const next = prev.filter((_, i) => i !== idx);
+      const newCache = {};
+      next.forEach((_, i) => { newCache[i] = textCache.current[i < idx ? i : i + 1] ?? ""; });
+      textCache.current = newCache;
+      return next;
+    });
+    const prevIdx = Math.max(0, idx - 1);
+    setCurLine(prevIdx);
+    focusLine(prevIdx);
   };
 
   // ── onChange: update text cache only, no React state → cursor safe ──
@@ -540,16 +540,7 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
 
       // Enter on a blank line = delete it (same as Backspace on empty)
       if (curVal === "" && lines.length > 1) {
-        setLines(prev => {
-          const next = prev.filter((_, i) => i !== idx);
-          const newCache = {};
-          next.forEach((_, i) => { newCache[i] = textCache.current[i < idx ? i : i + 1] ?? ""; });
-          textCache.current = newCache;
-          return next;
-        });
-        const prevIdx = Math.max(0, idx - 1);
-        setCurLine(prevIdx);
-        focusLine(prevIdx);
+        deleteLineAt(idx);
         return;
       }
 
@@ -588,17 +579,7 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
       if (curVal === "" && lines.length > 1) {
         e.preventDefault();
         setPopup(p => ({ ...p, visible: false }));
-        setLines(prev => {
-          const next = prev.filter((_, i) => i !== idx);
-          // reindex cache
-          const newCache = {};
-          next.forEach((_, i) => { newCache[i] = textCache.current[i < idx ? i : i + 1] ?? ""; });
-          textCache.current = newCache;
-          return next;
-        });
-        const prevIdx = Math.max(0, idx - 1);
-        setCurLine(prevIdx);
-        focusLine(prevIdx);
+        deleteLineAt(idx);
         return;
       }
     }
@@ -816,17 +797,6 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
           onClose={() => setContextMenu(null)}
         />
       )}
-
-      {/* Inline note popup */}
-      {inlineNote && (
-        <InlineNotePopup
-          x={inlineNote.x} y={inlineNote.y}
-          meta={inlineNote.meta}
-          onSave={saveInlineNote}
-          onClose={() => setInlineNote(null)}
-        />
-      )}
-
 
       {/* Inline note popup */}
       {inlineNote && (
@@ -2401,29 +2371,6 @@ function ImportModal({ profile, onImport, onClose }) {
               }} style={{ width: "100%", padding: "9px", background: "#000", color: "#FFF", border: "none", borderRadius: 4, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 13, marginTop: 8 }}>
                 Looks good — Import
               </button>
-            </div>
-          )}
-
-          {/* Uncertain lines review */}
-          {pendingLines && uncertainLines.length > 0 && (
-            <div style={{ background: "#FAFAFA", border: "1px solid #E0E0E0", borderRadius: 6, padding: 16 }}>
-              <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 700, color: "#000" }}>Review {uncertainLines.length} uncertain line{uncertainLines.length !== 1 ? "s" : ""}</p>
-              <p style={{ margin: "0 0 14px", fontSize: 12, color: "#AAA" }}>The AI wasn't sure about these. Pick the correct mode for each.</p>
-              {uncertainLines.map((line, i) => (
-                <div key={i} style={{ marginBottom: 12, padding: "10px 12px", background: "#FFF", border: "1px solid #EBEBEB", borderRadius: 4 }}>
-                  <p style={{ margin: "0 0 8px", fontSize: 12, fontFamily: "'Courier New', monospace", color: "#333" }}>{line.text}</p>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                    {["action","character","dialogue","location","direction","note"].map(mode => (
-                      <button key={mode} onClick={() => {
-                        const updated = pendingLines.map(l => l === line ? { ...l, mode, uncertain: false } : l);
-                        setPendingLines(updated);
-                        setUncertainLines(updated.filter(l => l.uncertain));
-                      }} style={{ padding: "4px 10px", borderRadius: 3, cursor: "pointer", fontFamily: "inherit", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", background: line.mode === mode ? "#000" : "#F4F4F4", color: line.mode === mode ? "#FFF" : "#666", border: `1px solid ${line.mode === mode ? "#000" : "#E0E0E0"}` }}>{mode}</button>
-                    ))}
-                  </div>
-                </div>
-              ))}
-              <button onClick={() => { const ls = pendingLines.map((l,i) => ({ id: Date.now()+i, text: l.text||"", mode: l.mode||"action" })); onImport({ title, format: fmt, genre, lines: ls }); }} style={{ width:"100%", padding:"9px", background:"#000", color:"#FFF", border:"none", borderRadius:4, cursor:"pointer", fontFamily:"inherit", fontWeight:700, fontSize:13, marginTop:8 }}>Looks good — Import</button>
             </div>
           )}
 
