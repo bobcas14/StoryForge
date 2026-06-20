@@ -2303,14 +2303,23 @@ function ImportModal({ profile, onImport, onClose }) {
       const res = await fetch(_apiUrl, {
         method: "POST", headers: _headers,
         body: JSON.stringify({
-          model: "claude-sonnet-4-5", max_tokens: 4000,
+          model: "claude-sonnet-4-5", max_tokens: 16000,
           system: "You are a script formatting engine. Classify each line into modes: action, character, dialogue, location, direction, note. For lines you are less than 90% confident about, add a \"uncertain\": true field. Return ONLY valid JSON — array of {text, mode, uncertain?} objects. No markdown, no preamble. Omit blank lines.",
           messages,
         }),
       });
       const d = await res.json();
       const raw_text = d.content?.filter(b => b.type === "text").map(b => b.text).join("") || "[]";
-      const parsed = JSON.parse(raw_text.replace(/```json|```/g, "").trim());
+      const cleaned = raw_text.replace(/```json|```/g, "").trim();
+      let parsed;
+      try {
+        parsed = JSON.parse(cleaned);
+      } catch (parseErr) {
+        // Response likely got cut off mid-array — salvage whatever complete {..} objects came through
+        const lastComplete = cleaned.lastIndexOf("},");
+        if (lastComplete === -1) throw parseErr;
+        parsed = JSON.parse(cleaned.slice(0, lastComplete + 1) + "]");
+      }
       if (parsed.length === 0) { setError("No lines found. Try a different file."); setLoading(false); setStatus(""); return; }
       const uncertain = parsed.filter(l => l.uncertain);
       if (uncertain.length > 0) {
