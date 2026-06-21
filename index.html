@@ -2265,9 +2265,33 @@ function ImportModal({ profile, onImport, onClose }) {
       setFilePayload({ type: "image", base64: b64, mediaType: file.type || "image/jpeg" });
       setRaw(""); setStatus("Image loaded — AI will read it on import.");
     } else if (ext === "pdf") {
+      setStatus("Reading PDF...");
       const b64 = await readAsBase64(file);
       setFilePayload({ type: "pdf", base64: b64, mediaType: "application/pdf" });
-      setRaw(""); setStatus("PDF loaded — AI will extract text on import.");
+      setRaw("");
+      // Try pulling real text out client-side — works for digital PDFs (exported from
+      // Word/Final Draft/Google Docs etc.), not scanned/photographed pages. No AI, no cost.
+      try {
+        await loadScript("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.min.js");
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.worker.min.js";
+        const arrayBuffer = await file.arrayBuffer();
+        const doc = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        let fullText = "";
+        for (let i = 1; i <= doc.numPages; i++) {
+          const page = await doc.getPage(i);
+          const content = await page.getTextContent();
+          fullText += content.items.map(item => item.str).join(" ") + "\n";
+        }
+        const extracted = fullText.trim();
+        if (extracted.length > 40) {
+          setRaw(extracted);
+          setStatus(`PDF loaded — ${extracted.split("\n").filter(l=>l.trim()).length} lines of text found. Smart or Text Upload both work.`);
+        } else {
+          setStatus("PDF loaded — looks scanned, no text layer found. Smart Upload only.");
+        }
+      } catch (err) {
+        setStatus("PDF loaded — text extraction unavailable here. Smart Upload will still work.");
+      }
     } else if (ext === "docx") {
       setStatus("Extracting text from DOCX...");
       try {
@@ -2309,14 +2333,18 @@ function ImportModal({ profile, onImport, onClose }) {
 
   // ── Text Upload: no AI call at all. Just splits the already-extracted plain text
   // into lines, all defaulting to "action" — mark each one's real type afterward with
-  // Tab or ⌥1-6 in the editor. Only works for files we can already get plain text from
-  // without AI (txt/fountain/md/docx via mammoth) — PDFs and images need AI to read at all.
+  // Tab or ⌥1-6 in the editor. Works for txt/fountain/md/docx (always) and digital PDFs
+  // (extracted client-side via pdf.js in handleFile). Images and scanned PDFs have no
+  // text to pull out without AI reading the page — that's not something to route around.
   const doTextImport = () => {
-    if (filePayload?.type === "image" || filePayload?.type === "pdf") {
-      setError("PDF and image files need Smart Upload — there's no way to pull text out of them without AI reading the page.");
+    if (!raw.trim()) {
+      if (filePayload?.type === "image") {
+        setError("Image files need Smart Upload — there's no text in a picture without AI reading it.");
+      } else if (filePayload?.type === "pdf") {
+        setError("This PDF doesn't have a text layer (it's likely scanned) — use Smart Upload instead.");
+      }
       return;
     }
-    if (!raw.trim()) return;
     const textLines = raw.split("\n").map(l => l.trim()).filter(Boolean);
     const lines = textLines.map((text, i) => ({ id: Date.now() + i, text, mode: "action" }));
     onImport({ title, format: fmt, genre, lines, cast: [] });
