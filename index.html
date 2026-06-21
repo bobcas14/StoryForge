@@ -19,6 +19,12 @@
   <script type="text/babel" data-presets="react">
     const { useState, useEffect, useRef } = React;
 
+// ─── FEATURE FLAGS ────────────────────────────────────────────────────────────
+// AI panel re-enabled — production visitors without their own API key now get
+// a clear "add your key" prompt instead of silently using the proxy's key.
+// Flip to false to kill AI access entirely again if needed.
+const AI_FEATURES_ENABLED = true;
+
 // ─── PALETTE: white bg, black text, hairline borders ─────────────────────────
 const T = {
   bg:       "#FFFFFF",
@@ -52,6 +58,11 @@ const FORMAT_CYCLES = {
   audiobook: ["action","character","dialogue","note"],
   stage:     ["action","character","dialogue","direction","location"],
 };
+
+// ── Alt/Option + number jumps a line straight to a mode, regardless of format's Tab-cycle.
+// Uses Alt rather than Cmd/Ctrl: Cmd/Ctrl+1-9 is reserved by every major browser for
+// switching tabs and can't be reliably overridden by preventDefault().
+const MODE_SHORTCUTS = { "1": "action", "2": "character", "3": "dialogue", "4": "location", "5": "direction", "6": "note" };
 
 const FORMATS = [
   { id:"film",      label:"Film Script"         },
@@ -111,6 +122,24 @@ const LS = {
   get: (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
   set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
 };
+
+// ─── API RESPONSE PARSING ─────────────────────────────────────────────────────
+// Validates a fetch response before calling .json() on it. A timed-out or
+// errored proxy can return an HTML/plaintext error page instead of JSON —
+// calling res.json() on that throws an opaque browser-native parse error
+// ("The string did not match the expected pattern" in Safari, "Unexpected
+// token <" in Chrome). This surfaces a clear, actionable message instead.
+async function parseApiResponse(res) {
+  const contentType = res.headers.get("content-type") || "";
+  if (!res.ok || !contentType.includes("application/json")) {
+    if (res.status === 504 || res.status === 408) {
+      throw new Error("The request timed out — try a shorter script, or fewer pages at a time.");
+    }
+    const text = await res.text().catch(() => "");
+    throw new Error(`Server returned an unexpected response (status ${res.status}). ${text.slice(0, 150) || "Try again with less content."}`);
+  }
+  return res.json();
+}
 
 // ─── LINE STYLE FOR EACH MODE ─────────────────────────────────────────────────
 // IMPORTANT: never use paddingLeft/paddingRight on textarea styles —
@@ -474,6 +503,14 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
   const handleKeyDown = (e, idx) => {
     const lineMode = lines[idx]?.mode;
 
+    // ── ALT+1-6: jump straight to a mode, bypassing the Tab-cycle ──
+    if (e.altKey && MODE_SHORTCUTS[e.key]) {
+      e.preventDefault();
+      setLines(prev => prev.map((l, i) => i === idx ? { ...l, mode: MODE_SHORTCUTS[e.key] } : l));
+      showPill(refs.current[idx]);
+      return;
+    }
+
     // ── pass through all Ctrl/Cmd combos except ones we own ──
     if ((e.ctrlKey || e.metaKey) && e.key === "a") {
       e.preventDefault();
@@ -832,7 +869,7 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
 }
 
 // ─── AI PANEL ─────────────────────────────────────────────────────────────────
-function AIPanel({ project, cast, onClose }) {
+function AIPanel({ project, cast, onClose, onGoToProfile }) {
   const [mode, setMode] = useState("write");
   const [prompt, setPrompt] = useState("");
   const [response, setResponse] = useState("");
@@ -848,11 +885,18 @@ function AIPanel({ project, cast, onClose }) {
       (project.moodCards || []).map(c => `[${c.tag}] ${c.title}: ${c.body}`).join("\n")
     : "";
 
+  // ── where this request is allowed to get its AI access from ──
+  const isArtifact = window.location.hostname.includes("claude.ai") || window.location.protocol === "blob:";
+  const isLocalDev = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+  const localKey = LS.get("sf_api_key", null); // set in Profile → API Key
+  const needsOwnKey = !isArtifact && !isLocalDev && !localKey;
+
   const run = async (sys, usr) => {
+    if (needsOwnKey) {
+      setResponse("Add your Anthropic API key in Profile → API Key to use AI features. Your key stays in your browser — it's never sent to or stored on our servers.");
+      return;
+    }
     setLoading(true); setResponse("");
-    const isArtifact = window.location.hostname.includes("claude.ai") || window.location.protocol === "blob:";
-    // Check for locally stored API key (set in Profile → API Key)
-    const localKey = LS.get("sf_api_key", null);
     let url, headers;
     if (isArtifact) {
       url = "https://api.anthropic.com/v1/messages";
@@ -861,12 +905,13 @@ function AIPanel({ project, cast, onClose }) {
       url = "https://api.anthropic.com/v1/messages";
       headers = { "Content-Type": "application/json", "x-api-key": localKey, "anthropic-version": "2023-06-01" };
     } else {
+      // isLocalDev only at this point — convenience fallback for local development
       url = "/api/chat";
       headers = { "Content-Type": "application/json" };
     }
     try {
       const res = await fetch(url, { method: "POST", headers, body: JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 1000, system: sys, messages: [{ role: "user", content: usr }] }) });
-      const d = await res.json();
+      const d = await parseApiResponse(res);
       if (d.error) {
         setResponse(`API error: ${d.error?.message || d.error?.type || JSON.stringify(d.error)}`);
       } else if (d.content) {
@@ -916,6 +961,20 @@ function AIPanel({ project, cast, onClose }) {
         </div>
         <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 20, color: "#AAA", lineHeight: 1, padding: 4 }}>×</button>
       </div>
+
+      {/* BYOK notice — shown when this visitor has no key on file */}
+      {needsOwnKey && (
+        <div style={{ margin: "14px 20px 0", padding: "12px 14px", background: "#FAFAFA", border: "1px solid #E8E8E8", borderRadius: 6 }}>
+          <p style={{ margin: "0 0 6px", fontSize: 12, fontWeight: 700, color: "#000" }}>Add your API key to use AI features</p>
+          <p style={{ margin: "0 0 10px", fontSize: 11.5, color: "#777", lineHeight: 1.6 }}>
+            Paste a key from console.anthropic.com in Profile. It stays in your browser only — never sent to or stored on our servers.
+          </p>
+          <button onClick={onGoToProfile} style={{
+            padding: "7px 12px", borderRadius: 4, background: "#000", color: "#FFF",
+            border: "none", cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 11.5,
+          }}>Add API key</button>
+        </div>
+      )}
 
       {/* Mode tabs */}
       <div style={{ display: "flex", borderBottom: "1px solid #E8E8E8" }}>
@@ -2074,7 +2133,7 @@ function MoodBoard({ project, onUpdateCards, onClose }) {
 ${prompt}` }],
         }),
       });
-      const d = await res.json();
+      const d = await parseApiResponse(res);
       const raw = d.content?.filter(b => b.type === "text").map(b => b.text).join("") || "[]";
       const parsed = JSON.parse(raw.replace(/```json|```/g, "").trim());
       const newCards = parsed.map((c, i) => ({ id: Date.now() + i, ...c, source: prompt.trim() }));
@@ -2159,6 +2218,7 @@ ${prompt}` }],
 
 // ─── SCRIPT IMPORT MODAL ──────────────────────────────────────────────────────
 function ImportModal({ profile, onImport, onClose }) {
+  const [uploadMode, setUploadMode] = useState("smart"); // "smart" (AI) | "text" (no AI)
   const [raw, setRaw] = useState("");
   const [filePayload, setFilePayload] = useState(null);
   const [fileName, setFileName] = useState("");
@@ -2170,6 +2230,8 @@ function ImportModal({ profile, onImport, onClose }) {
   const [error, setError] = useState("");
   const [pendingLines, setPendingLines] = useState(null);
   const [uncertainLines, setUncertainLines] = useState([]);
+  const [pendingChars, setPendingChars] = useState(null);
+  const [charToggles, setCharToggles] = useState({});
   const fileRef = useRef(null);
 
   const readAsBase64 = (file) => new Promise((resolve, reject) => {
@@ -2245,6 +2307,21 @@ function ImportModal({ profile, onImport, onClose }) {
 
   const canImport = raw.trim().length > 0 || filePayload !== null;
 
+  // ── Text Upload: no AI call at all. Just splits the already-extracted plain text
+  // into lines, all defaulting to "action" — mark each one's real type afterward with
+  // Tab or ⌥1-6 in the editor. Only works for files we can already get plain text from
+  // without AI (txt/fountain/md/docx via mammoth) — PDFs and images need AI to read at all.
+  const doTextImport = () => {
+    if (filePayload?.type === "image" || filePayload?.type === "pdf") {
+      setError("PDF and image files need Smart Upload — there's no way to pull text out of them without AI reading the page.");
+      return;
+    }
+    if (!raw.trim()) return;
+    const textLines = raw.split("\n").map(l => l.trim()).filter(Boolean);
+    const lines = textLines.map((text, i) => ({ id: Date.now() + i, text, mode: "action" }));
+    onImport({ title, format: fmt, genre, lines, cast: [] });
+  };
+
   const doImport = async () => {
     if (!canImport) return;
     setLoading(true); setError(""); setStatus("AI is reading your script...");
@@ -2278,7 +2355,7 @@ function ImportModal({ profile, onImport, onClose }) {
           messages,
         }),
       });
-      const d = await res.json();
+      const d = await parseApiResponse(res);
       const raw_text = d.content?.filter(b => b.type === "text").map(b => b.text).join("") || "[]";
       const cleaned = raw_text.replace(/```json|```/g, "").trim();
       let parsed;
@@ -2292,22 +2369,39 @@ function ImportModal({ profile, onImport, onClose }) {
       }
       if (parsed.length === 0) { setError("No lines found. Try a different file."); setLoading(false); setStatus(""); return; }
       const uncertain = parsed.filter(l => l.uncertain);
-      if (uncertain.length > 0) {
-        // Show confirmation for uncertain lines
+      const charNames = [...new Set(
+        parsed.filter(l => l.mode === "character" && l.text?.trim()).map(l => l.text.trim().toUpperCase())
+      )];
+
+      if (uncertain.length > 0 || charNames.length > 0) {
         setPendingLines(parsed);
         setUncertainLines(uncertain);
+        setPendingChars(charNames);
+        setCharToggles(Object.fromEntries(charNames.map(n => [n, true])));
         setLoading(false);
-        setStatus(`${parsed.length} lines classified. ${uncertain.length} need your review.`);
+        const parts = [];
+        if (charNames.length) parts.push(`${charNames.length} character${charNames.length !== 1 ? "s" : ""} found`);
+        if (uncertain.length) parts.push(`${uncertain.length} line${uncertain.length !== 1 ? "s" : ""} to review`);
+        setStatus(`${parsed.length} lines classified — ${parts.join(", ")}.`);
         return;
       }
       const lines = parsed.map((l, i) => ({ id: Date.now() + i, text: l.text || "", mode: l.mode || "action" }));
       setStatus(`Done — ${lines.length} lines imported.`);
-      onImport({ title, format: fmt, genre, lines });
+      onImport({ title, format: fmt, genre, lines, cast: [] });
     } catch(err) {
       setError("Import failed: " + (err.message || "unknown error"));
       setStatus("");
     }
     setLoading(false);
+  };
+
+  // ── finalize import from the review step: applies confirmed line modes + confirmed cast ──
+  const finalizeImport = () => {
+    const lines = pendingLines.map((l, i) => ({ id: Date.now() + i, text: l.text || "", mode: l.mode || "action" }));
+    const cast = (pendingChars || [])
+      .filter(name => charToggles[name])
+      .map((name, i) => ({ id: Date.now() + 5000 + i, name, role: "Supporting", voice: "", notes: "" }));
+    onImport({ title, format: fmt, genre, lines, cast });
   };
 
   const ACCEPTED = ".txt,.fountain,.fdx,.pdf,.doc,.docx,.md,.rtf,.jpg,.jpeg,.png,.gif,.webp,.bmp,.tiff,.heic";
@@ -2319,12 +2413,34 @@ function ImportModal({ profile, onImport, onClose }) {
         <div style={{ padding:"20px 24px", borderBottom:"1px solid #EBEBEB", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
           <div>
             <p style={{ margin:0, fontSize:15, fontWeight:800, color:"#000" }}>Import Script</p>
-            <p style={{ margin:"3px 0 0", fontSize:12, color:"#AAA" }}>Upload any file or paste text — AI reads and formats everything.</p>
+            <p style={{ margin:"3px 0 0", fontSize:12, color:"#AAA" }}>Choose Smart (AI-formatted) or Text (instant, no AI) — then upload any file.</p>
           </div>
           <button onClick={onClose} style={{ background:"none", border:"none", cursor:"pointer", fontSize:22, color:"#AAA", lineHeight:1, padding:4 }}>×</button>
         </div>
 
         <div style={{ flex:1, overflowY:"auto", padding:24, display:"flex", flexDirection:"column", gap:16 }}>
+          {/* Smart Upload vs Text Upload */}
+          <div style={{ display:"flex", gap:8 }}>
+            <button onClick={() => setUploadMode("smart")} style={{
+              flex:1, padding:"10px 14px", borderRadius:6, cursor:"pointer", fontFamily:"inherit", textAlign:"left",
+              border:`1px solid ${uploadMode === "smart" ? "#000" : "#E0E0E0"}`,
+              background: uploadMode === "smart" ? "#000" : "#FAFAFA",
+              color: uploadMode === "smart" ? "#FFF" : "#555",
+            }}>
+              <span style={{ fontSize:13, fontWeight:700 }}>✦ Smart Upload</span>
+              <span style={{ display:"block", fontSize:11, fontWeight:400, marginTop:2, color: uploadMode === "smart" ? "#BBB" : "#AAA" }}>AI reads & classifies every line</span>
+            </button>
+            <button onClick={() => setUploadMode("text")} style={{
+              flex:1, padding:"10px 14px", borderRadius:6, cursor:"pointer", fontFamily:"inherit", textAlign:"left",
+              border:`1px solid ${uploadMode === "text" ? "#000" : "#E0E0E0"}`,
+              background: uploadMode === "text" ? "#000" : "#FAFAFA",
+              color: uploadMode === "text" ? "#FFF" : "#555",
+            }}>
+              <span style={{ fontSize:13, fontWeight:700 }}>Text Upload</span>
+              <span style={{ display:"block", fontSize:11, fontWeight:400, marginTop:2, color: uploadMode === "text" ? "#BBB" : "#AAA" }}>No AI — instant, mark lines yourself</span>
+            </button>
+          </div>
+
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12 }}>
             <div><label style={css.label}>Project title</label><input value={title} onChange={e => setTitle(e.target.value)} style={css.input} /></div>
             <div><label style={css.label}>Format</label>
@@ -2339,36 +2455,71 @@ function ImportModal({ profile, onImport, onClose }) {
             </div>
           </div>
 
-          {/* Uncertain lines review */}
-          {pendingLines && uncertainLines.length > 0 && (
+          {/* Review step: detected characters + uncertain lines */}
+          {pendingLines && (uncertainLines.length > 0 || (pendingChars && pendingChars.length > 0)) && (
             <div style={{ background: "#FAFAFA", border: "1px solid #E0E0E0", borderRadius: 6, padding: 16 }}>
-              <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 700, color: "#000" }}>Review {uncertainLines.length} uncertain line{uncertainLines.length !== 1 ? "s" : ""}</p>
-              <p style={{ margin: "0 0 14px", fontSize: 12, color: "#AAA" }}>The AI wasn't sure about these. Pick the correct mode for each.</p>
-              {uncertainLines.map((line, i) => (
-                <div key={i} style={{ marginBottom: 12, padding: "10px 12px", background: "#FFF", border: "1px solid #EBEBEB", borderRadius: 4 }}>
-                  <p style={{ margin: "0 0 8px", fontSize: 12, fontFamily: "'Courier New', monospace", color: "#333" }}>{line.text}</p>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                    {["action","character","dialogue","location","direction","note"].map(mode => (
-                      <button key={mode} onClick={() => {
-                        const updated = pendingLines.map(l => l === line ? { ...l, mode, uncertain: false } : l);
-                        setPendingLines(updated);
-                        const stillUncertain = updated.filter(l => l.uncertain);
-                        setUncertainLines(stillUncertain);
-                      }} style={{
-                        padding: "4px 10px", borderRadius: 3, cursor: "pointer", fontFamily: "inherit",
-                        fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em",
-                        background: line.mode === mode ? "#000" : "#F4F4F4",
-                        color: line.mode === mode ? "#FFF" : "#666",
-                        border: `1px solid ${line.mode === mode ? "#000" : "#E0E0E0"}`,
-                      }}>{mode}</button>
+
+              {/* Detected characters — confirm each before adding to cast */}
+              {pendingChars && pendingChars.length > 0 && (
+                <div style={{ marginBottom: uncertainLines.length > 0 ? 20 : 4 }}>
+                  <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 700, color: "#000" }}>{pendingChars.length} character{pendingChars.length !== 1 ? "s" : ""} found</p>
+                  <p style={{ margin: "0 0 12px", fontSize: 12, color: "#AAA" }}>Add these to your cast?</p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {pendingChars.map(name => (
+                      <div key={name} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", background: "#FFF", border: "1px solid #EBEBEB", borderRadius: 4 }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: "#000", letterSpacing: "0.02em" }}>{name}</span>
+                        <div style={{ display: "flex", gap: 4 }}>
+                          <button onClick={() => setCharToggles(t => ({ ...t, [name]: true }))} style={{
+                            padding: "4px 10px", borderRadius: 3, cursor: "pointer", fontFamily: "inherit",
+                            fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em",
+                            background: charToggles[name] ? "#000" : "#F4F4F4",
+                            color: charToggles[name] ? "#FFF" : "#999",
+                            border: `1px solid ${charToggles[name] ? "#000" : "#E0E0E0"}`,
+                          }}>Yes</button>
+                          <button onClick={() => setCharToggles(t => ({ ...t, [name]: false }))} style={{
+                            padding: "4px 10px", borderRadius: 3, cursor: "pointer", fontFamily: "inherit",
+                            fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em",
+                            background: !charToggles[name] ? "#000" : "#F4F4F4",
+                            color: !charToggles[name] ? "#FFF" : "#999",
+                            border: `1px solid ${!charToggles[name] ? "#000" : "#E0E0E0"}`,
+                          }}>No</button>
+                        </div>
+                      </div>
                     ))}
                   </div>
                 </div>
-              ))}
-              <button onClick={() => {
-                const lines = pendingLines.map((l, i) => ({ id: Date.now() + i, text: l.text || "", mode: l.mode || "action" }));
-                onImport({ title, format: fmt, genre, lines });
-              }} style={{ width: "100%", padding: "9px", background: "#000", color: "#FFF", border: "none", borderRadius: 4, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 13, marginTop: 8 }}>
+              )}
+
+              {/* Uncertain lines — pick the correct mode for each */}
+              {uncertainLines.length > 0 && (
+                <div>
+                  <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 700, color: "#000" }}>Review {uncertainLines.length} uncertain line{uncertainLines.length !== 1 ? "s" : ""}</p>
+                  <p style={{ margin: "0 0 14px", fontSize: 12, color: "#AAA" }}>The AI wasn't sure about these. Pick the correct mode for each.</p>
+                  {uncertainLines.map((line, i) => (
+                    <div key={i} style={{ marginBottom: 12, padding: "10px 12px", background: "#FFF", border: "1px solid #EBEBEB", borderRadius: 4 }}>
+                      <p style={{ margin: "0 0 8px", fontSize: 12, fontFamily: "'Courier New', monospace", color: "#333" }}>{line.text}</p>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                        {["action","character","dialogue","location","direction","note"].map(mode => (
+                          <button key={mode} onClick={() => {
+                            const updated = pendingLines.map(l => l === line ? { ...l, mode, uncertain: false } : l);
+                            setPendingLines(updated);
+                            const stillUncertain = updated.filter(l => l.uncertain);
+                            setUncertainLines(stillUncertain);
+                          }} style={{
+                            padding: "4px 10px", borderRadius: 3, cursor: "pointer", fontFamily: "inherit",
+                            fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em",
+                            background: line.mode === mode ? "#000" : "#F4F4F4",
+                            color: line.mode === mode ? "#FFF" : "#666",
+                            border: `1px solid ${line.mode === mode ? "#000" : "#E0E0E0"}`,
+                          }}>{mode}</button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <button onClick={finalizeImport} style={{ width: "100%", padding: "9px", background: "#000", color: "#FFF", border: "none", borderRadius: 4, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 13, marginTop: 8 }}>
                 Looks good — Import
               </button>
             </div>
@@ -2423,7 +2574,9 @@ function ImportModal({ profile, onImport, onClose }) {
 
         <div style={{ padding:"16px 24px", borderTop:"1px solid #EBEBEB", display:"flex", justifyContent:"space-between", alignItems:"center", gap:10 }}>
           <div style={{ flex: 1 }}>
-            <p style={{ margin:0, fontSize:11, color: loading ? "#555" : "#CCC" }}>{loading ? status : canImport ? "Ready to import" : "Upload a file or paste text above"}</p>
+            <p style={{ margin:0, fontSize:11, color: loading ? "#555" : "#CCC" }}>
+              {loading ? status : canImport ? (uploadMode === "smart" ? "Ready to import" : "Ready — imports instantly, no AI. Mark lines with Tab or ⌥1\u20136 after.") : "Upload a file or paste text above"}
+            </p>
             {loading && (
               <div style={{ marginTop: 6, height: 2, background: "#EBEBEB", borderRadius: 1, overflow: "hidden" }}>
                 <div style={{ height: "100%", background: "#000", borderRadius: 1, animation: "sf-progress 2s ease-in-out infinite" }} />
@@ -2432,11 +2585,11 @@ function ImportModal({ profile, onImport, onClose }) {
           </div>
           <div style={{ display:"flex", gap:10 }}>
             <button onClick={onClose} style={{ padding:"9px 20px", background:"none", border:"1px solid #D0D0D0", borderRadius:4, cursor:"pointer", fontFamily:"inherit", fontSize:13, color:"#666" }}>Cancel</button>
-            <button onClick={doImport} disabled={loading || !canImport} style={{
+            <button onClick={uploadMode === "smart" ? doImport : doTextImport} disabled={loading || !canImport} style={{
               padding:"9px 24px", background:"#000", color:"#FFF", border:"none", borderRadius:4,
               cursor: loading || !canImport ? "not-allowed" : "pointer",
               fontFamily:"inherit", fontWeight:700, fontSize:13, opacity: loading || !canImport ? 0.4 : 1,
-            }}>{loading ? "Importing..." : "Import & Format"}</button>
+            }}>{loading ? "Importing..." : uploadMode === "smart" ? "Import & Format" : "Import as Text"}</button>
           </div>
         </div>
       </div>
@@ -2670,8 +2823,9 @@ function ShortcutsOverlay({ onClose }) {
     return () => window.removeEventListener("keydown", h);
   }, [onClose]);
   const shortcuts = [
-    ["Tab","Cycle block type"],["Enter","New line (smart)"],["Shift+Tab","—"],["Esc","Cancel / back to action"],
-    ["⌘K","Toggle AI panel"],["⌘N","Inline note at cursor"],["⌘A","Select current block"],
+    ["Tab","Cycle block type"],["⌥1\u20136","Jump to mode (action\u2192note)"],["Enter","New line (smart)"],["Shift+Tab","—"],["Esc","Cancel / back to action"],
+    ...(AI_FEATURES_ENABLED ? [["⌘K","Toggle AI panel"]] : []),
+    ["⌘N","Inline note at cursor"],["⌘A","Select current block"],
     ["⌘B","Beat Board"],["⌘M","Scene Navigator"],["⌘F","Focus / Typewriter mode"],
     ["⌘/","This shortcuts list"],["Right-click","Add to cast"],
   ];
@@ -3263,7 +3417,7 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
   useEffect(() => {
     const handler = (e) => {
       if (!(e.metaKey || e.ctrlKey)) return;
-      if (e.key === "k") { e.preventDefault(); setAiOpen(o => !o); }
+      if (e.key === "k" && AI_FEATURES_ENABLED) { e.preventDefault(); setAiOpen(o => !o); }
       if (e.key === "b") { e.preventDefault(); setNav(n => n === "beats" ? "write" : "beats"); }
       if (e.key === "f") { e.preventDefault(); setFocusMode(o => !o); }
       if (e.key === "m") { e.preventDefault(); setSceneNavCollapsed(o => !o); }
@@ -3314,7 +3468,7 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
   const updateSceneGallery = (changes) => { if (active) updateProject(active.id, changes); };
 
   const importScript = (imported) => {
-    const p = { id: Date.now(), title: imported.title, format: imported.format, genre: imported.genre, lines: imported.lines, cast: [], notes: "", moodCards: [], created: Date.now() };
+    const p = { id: Date.now(), title: imported.title, format: imported.format, genre: imported.genre, lines: imported.lines, cast: imported.cast || [], notes: "", moodCards: [], created: Date.now() };
     setProjects(prev => [p, ...prev]);
     setActiveId(p.id);
     setNav("write");
@@ -3477,18 +3631,20 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
                 {FORMATS.map(f => <option key={f.id} value={f.id}>{f.label}</option>)}
               </select>
               <div style={{ width: 1, height: 20, background: "#EBEBEB", flexShrink: 0 }} />
-              <button onClick={() => setAiOpen(o => !o)} style={{
-                padding: "6px 14px", borderRadius: 4, flexShrink: 0,
-                border: `1px solid ${aiOpen ? "#000" : "#D0D0D0"}`,
-                background: aiOpen ? "#000" : "#FAFAFA",
-                color: aiOpen ? "#FFF" : "#444",
-                fontSize: 12, fontWeight: 700, cursor: "pointer",
-                fontFamily: "inherit", transition: "all 0.12s",
-                display: "flex", alignItems: "center", gap: 6,
-              }}>
-                ✦ AI
-                <span style={{ fontSize: 10, color: aiOpen ? "#888" : "#BBB", fontWeight: 500 }}>⌘K</span>
-              </button>
+              {AI_FEATURES_ENABLED && (
+                <button onClick={() => setAiOpen(o => !o)} style={{
+                  padding: "6px 14px", borderRadius: 4, flexShrink: 0,
+                  border: `1px solid ${aiOpen ? "#000" : "#D0D0D0"}`,
+                  background: aiOpen ? "#000" : "#FAFAFA",
+                  color: aiOpen ? "#FFF" : "#444",
+                  fontSize: 12, fontWeight: 700, cursor: "pointer",
+                  fontFamily: "inherit", transition: "all 0.12s",
+                  display: "flex", alignItems: "center", gap: 6,
+                }}>
+                  ✦ AI
+                  <span style={{ fontSize: 10, color: aiOpen ? "#888" : "#BBB", fontWeight: 500 }}>⌘K</span>
+                </button>
+              )}
               <button onClick={() => setImportOpen(true)} style={{
                 padding: "6px 12px", borderRadius: 4, border: "1px solid #D0D0D0", flexShrink: 0,
                 background: "#FAFAFA", color: "#555", fontSize: 12, fontWeight: 600,
@@ -3617,7 +3773,7 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
       {importOpen && <ImportModal profile={profile} onImport={importScript} onClose={() => setImportOpen(false)} />}
 
       {/* ── AI PANEL ── */}
-      {aiOpen && active && <AIPanel project={active} cast={cast} onClose={() => setAiOpen(false)} />}
+      {AI_FEATURES_ENABLED && aiOpen && active && <AIPanel project={active} cast={cast} onClose={() => setAiOpen(false)} onGoToProfile={() => { setNav("profile"); setAiOpen(false); }} />}
 
       {/* ── STATUS BAR (Section 11) ── */}
       <div style={{
@@ -3639,7 +3795,7 @@ function App({ profile, onEditProfile, onHome, initialProject, onSaveProject, on
           </>
         ) : (
           <span style={{ fontSize:10, color:"#CCC", fontStyle:"italic" }}>
-            {["Tab","Enter","Esc","⌘K"].map(k => <span key={k} style={{ marginRight:14 }}><kbd style={{ background:"#FFF", border:"1px solid #DDD", borderRadius:3, padding:"1px 5px", fontSize:9, fontWeight:700, color:"#666" }}>{k}</kbd></span>)}
+            {(AI_FEATURES_ENABLED ? ["Tab","Enter","Esc","⌘K"] : ["Tab","Enter","Esc"]).map(k => <span key={k} style={{ marginRight:14 }}><kbd style={{ background:"#FFF", border:"1px solid #DDD", borderRadius:3, padding:"1px 5px", fontSize:9, fontWeight:700, color:"#666" }}>{k}</kbd></span>)}
           </span>
         )}
         <div style={{ marginLeft:"auto", display:"flex", gap:10, alignItems:"center" }}>
