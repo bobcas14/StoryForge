@@ -568,12 +568,13 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
       return;
     }
 
-    // ── ENTER: if line is blank → delete it; if not → create smart next line ──
+    // ── ENTER: if line is blank → delete it; otherwise split at the cursor ──
     if (e.key === "Enter") {
       e.preventDefault();
       setPopup(p => ({ ...p, visible: false }));
 
-      const curVal = refs.current[idx]?.value ?? (textCache.current[idx] ?? "");
+      const el = refs.current[idx];
+      const curVal = el?.value ?? (textCache.current[idx] ?? "");
 
       // Enter on a blank line = delete it (same as Backspace on empty)
       if (curVal === "" && lines.length > 1) {
@@ -581,29 +582,42 @@ function SmartEditor({ project, cast, onUpdateContent, onAddCharacter, format, o
         return;
       }
 
-      // Enter on a non-empty line → create smart next line
+      // Split at the cursor, like normal text editors — not always a blank line below.
+      // If text is selected, the selection is replaced (same as typing over a selection).
+      const selStart = el ? el.selectionStart : curVal.length;
+      const selEnd = el ? el.selectionEnd : curVal.length;
+      const before = curVal.slice(0, selStart);
+      const after = curVal.slice(selEnd);
+      const atEnd = after.length === 0;
+
+      if (el) el.value = before;
+      textCache.current[idx] = before;
+
+      // Cursor at the end of a finished line → keep the fast-writing flow (empty line, smart mode switch).
+      // Cursor mid-line → the remainder moves down as-is, same mode — it's a split, not a new beat.
       const nextMode =
         lineMode === "character" ? "dialogue" :
         lineMode === "dialogue"  ? "character" :
         lineMode === "location"  ? "action" : "action";
-      const newLine = { id: Date.now(), text: "", mode: nextMode };
-
-      // flush current textarea into cache
-      textCache.current[idx] = refs.current[idx]?.value ?? (textCache.current[idx] || "");
+      const newText = atEnd ? "" : after;
+      const newMode = atEnd ? nextMode : lineMode;
+      const newLine = { id: Date.now(), text: newText, mode: newMode };
 
       // shift cache synchronously BEFORE setLines
       for (let i = lines.length; i > idx + 1; i--) {
         textCache.current[i] = textCache.current[i - 1] ?? "";
       }
-      textCache.current[idx + 1] = "";
+      textCache.current[idx + 1] = newText;
 
       setLines(prev => {
         const next = [...prev];
+        next[idx] = { ...next[idx], text: before };
         next.splice(idx + 1, 0, newLine);
         return next;
       });
       setCurLine(idx + 1);
       focusLine(idx + 1, false);
+      scheduleSync();
       return;
     }
 
@@ -2280,7 +2294,18 @@ function ImportModal({ profile, onImport, onClose }) {
         for (let i = 1; i <= doc.numPages; i++) {
           const page = await doc.getPage(i);
           const content = await page.getTextContent();
-          fullText += content.items.map(item => item.str).join(" ") + "\n";
+          // getTextContent() has no line-break info — items are just positioned text
+          // fragments. Reconstruct real lines from the vertical (y) position: a jump
+          // in y means a new line, otherwise join fragments with a space.
+          let lastY = null;
+          content.items.forEach(item => {
+            const y = item.transform[5];
+            if (lastY !== null && Math.abs(y - lastY) > 2) fullText += "\n";
+            else if (fullText && !fullText.endsWith("\n")) fullText += " ";
+            fullText += item.str;
+            lastY = y;
+          });
+          fullText += "\n";
         }
         const extracted = fullText.trim();
         if (extracted.length > 40) {
