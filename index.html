@@ -392,14 +392,6 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
   const syncTimerRef=useRef(null);
   const cycle=FORMAT_CYCLES[format]||FORMAT_CYCLES.film;
 
-  // ── VIRTUALIZATION: only render lines near the viewport ───────────────────
-  // Renders a window of VIRT_BUFFER lines above and below the visible area.
-  // Lines outside the window are replaced with a spacer div that holds their
-  // height so scroll stays correct. Keeps DOM nodes ~120 regardless of length.
-  const VIRT_BUFFER=60;
-  const [virtRange,setVirtRange]=useState({start:0,end:VIRT_BUFFER*2});
-  const virtScrollTimer=useRef(null);
-
   // ── PAGE MAP: stored in a ref, only recomputed after debounce settles ──────
   // FIX: was recomputed inline on every render (caused page breaks to flash
   // whenever any keystroke triggered a re-render with stale lineHeights).
@@ -448,34 +440,9 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
       scrollRef.current=(idx)=>{
         const el=wrapperRefs.current[idx];
         if(el&&containerRef.current){el.scrollIntoView({behavior:"smooth",block:"center"});refs.current[idx]?.focus();}
-        // Make sure the target line is in the rendered window
-        setVirtRange({start:Math.max(0,idx-VIRT_BUFFER),end:Math.min(lines.length,idx+VIRT_BUFFER)});
       };
     }
-  },[scrollRef,lines.length]);
-
-  // ── virtualization scroll handler ─────────────────────────────────────────
-  useEffect(()=>{
-    const container=containerRef.current;
-    if(!container) return;
-    const onScroll=()=>{
-      clearTimeout(virtScrollTimer.current);
-      virtScrollTimer.current=setTimeout(()=>{
-        const{scrollTop,clientHeight}=container;
-        // Estimate which line index is at the top of viewport using avg line height
-        const avgH=Object.keys(lineHeights.current).length>0
-          ? Object.values(lineHeights.current).reduce((a,b)=>a+b,0)/Object.keys(lineHeights.current).length
-          : 32;
-        const topPage=Math.floor(scrollTop/avgH);
-        const visibleLines=Math.ceil(clientHeight/avgH);
-        const start=Math.max(0,topPage-VIRT_BUFFER);
-        const end=Math.min(lines.length,topPage+visibleLines+VIRT_BUFFER);
-        setVirtRange({start,end});
-      },50);
-    };
-    container.addEventListener("scroll",onScroll,{passive:true});
-    return()=>container.removeEventListener("scroll",onScroll);
-  },[lines.length]);
+  },[scrollRef]);
 
   // ── post-mount: measure heights in one RAF pass after browser has painted ──
   // This gives the page map accurate data without blocking the initial render.
@@ -754,19 +721,6 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
           {lines.map((line,idx)=>{
             const isBreakBefore=pageMap.breakSet.has(idx);
             const pageNum=pageMap.lineToPage[idx]||1;
-            const isInWindow=idx>=virtRange.start&&idx<=virtRange.end;
-
-            // Lines outside the render window → lightweight spacer preserving height
-            if(!isInWindow){
-              const h=lineHeights.current[idx]||28;
-              return(
-                <div key={line.id}>
-                  {isBreakBefore&&<PageBreakDivider pageNum={pageNum} title={project?.title} format={format}/>}
-                  <div style={{height:h}}/>
-                </div>
-              );
-            }
-
             return(
               <div key={line.id}>
                 {isBreakBefore&&<PageBreakDivider pageNum={pageNum} title={project?.title} format={format}/>}
