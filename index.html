@@ -536,6 +536,20 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
       if(el){el.focus();el.select();}
       return;
     }
+    // ── ⌘Backspace: delete entire line regardless of content ──────────────
+    if((e.ctrlKey||e.metaKey)&&e.key==="Backspace"){
+      e.preventDefault();
+      if(lines.length<=1){
+        // Only line — just clear it
+        const el=refs.current[idx];
+        if(el){el.value="";}
+        textCache.current[idx]="";
+        scheduleSync();
+        return;
+      }
+      deleteLineAt(idx);
+      return;
+    }
     if((e.ctrlKey||e.metaKey)&&e.key==="n"){
       e.preventDefault();
       const el=refs.current[idx];
@@ -734,11 +748,7 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
     setInlineNote(null);
   };
 
-  const placeholder=(mode)=>({
-    character:"CHARACTER NAME",dialogue:"Dialogue...",
-    location:"INT./EXT. LOCATION — DAY/NIGHT",direction:"(parenthetical)",
-    note:"// note...",action:"Action / description...",
-  }[mode]||"");
+  const placeholder=(mode)=>"...";
 
   const taStyle=(mode)=>{
     const ls=lineStyle(mode,format);
@@ -1650,7 +1660,7 @@ function NotesPanel({notes,onChange}){
 
 function ShortcutsOverlay({onClose}){
   useEffect(()=>{const h=(e)=>{if(e.key==="Escape"||(e.key==="/"&&(e.metaKey||e.ctrlKey)))onClose();};window.addEventListener("keydown",h);return()=>window.removeEventListener("keydown",h);},[onClose]);
-  const shortcuts=[["Tab","Cycle block type"],["⌥1–6","Jump to mode"],["Enter","New line (smart)"],["Esc","Cancel / back to action"],["⌘Z","Undo"],["⌘⇧Z","Redo"],["⌘K","Toggle AI panel"],["⌘N","Inline note at cursor"],["⌘A","Select current block"],["⌘B","Beat Board"],["⌘F","Focus mode"],["⌘/","This shortcuts list"],["Right-click","Add to cast"]];
+  const shortcuts=[["Tab","Cycle block type"],["⌥1–6","Jump to mode"],["Enter","New line (smart)"],["Esc","Cancel / back to action"],["⌘Z","Undo"],["⌘⇧Z","Redo"],["⌘Backspace","Delete entire line"],["⌘K","Toggle AI panel"],["⌘N","Inline note at cursor"],["⌘A","Select current block"],["⌘B","Beat Board"],["⌘F","Focus mode"],["⌘/","This shortcuts list"],["Right-click","Add to cast"]];
   return(
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",zIndex:3000,display:"flex",alignItems:"center",justifyContent:"center"}}>
       <div onClick={e=>e.stopPropagation()} style={{background:"#FFF",border:"1px solid #D0D0D0",borderRadius:8,padding:"32px 36px",width:480,boxShadow:"0 8px 40px rgba(0,0,0,0.18)"}}>
