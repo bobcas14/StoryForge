@@ -618,7 +618,12 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
       const atEnd=after.length===0;
       if(el) el.value=before;
       textCache.current[idx]=before;
-      const nextMode=lineMode==="character"?"dialogue":lineMode==="dialogue"?"character":lineMode==="location"?"action":"action";
+      // Smart mode for new line when pressing Enter at END of a line.
+      // character→dialogue is standard screenplay flow.
+      // dialogue→dialogue lets writers keep adding dialogue lines naturally;
+      // they can Tab to character when they want a new speaker.
+      // location→action starts the scene body.
+      const nextMode=lineMode==="character"?"dialogue":lineMode==="location"?"action":"action";
       const newText=atEnd?"":after;
       const newMode=atEnd?nextMode:lineMode;
       const newLine={id:Date.now(),text:newText,mode:newMode};
@@ -643,6 +648,40 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
         e.preventDefault();
         setPopup(p=>({...p,visible:false}));
         deleteLineAt(idx);
+        return;
+      }
+      // Backspace at position 0 on a non-empty line → merge this line's text
+      // up into the end of the previous line, then remove this line.
+      // This lets the writer join two incorrectly-split dialogue lines.
+      const el=refs.current[idx];
+      const pos=el?el.selectionStart:0;
+      if(pos===0&&curVal.length>0&&idx>0){
+        e.preventDefault();
+        setPopup(p=>({...p,visible:false}));
+        const prevEl=refs.current[idx-1];
+        const prevVal=prevEl?.value??textCache.current[idx-1]??"";
+        const merged=prevVal+curVal;
+        const joinPos=prevVal.length;
+        // Write merged text into previous line DOM and cache
+        if(prevEl){prevEl.value=merged;autoGrow(prevEl);}
+        textCache.current[idx-1]=merged;
+        // Remove current line, reindex cache
+        setLines(prev=>{
+          const next=prev.filter((_,i)=>i!==idx);
+          const newCache={};
+          next.forEach((_,i)=>{newCache[i]=textCache.current[i<idx?i:i+1]??"";});
+          newCache[idx-1]=merged;
+          textCache.current=newCache;
+          pageMapRef.current=computePageMap(next);
+          return next;
+        });
+        setCurLine(idx-1);
+        // Place cursor at the join point in the previous line
+        setTimeout(()=>{
+          const el=refs.current[idx-1];
+          if(el){el.focus();el.setSelectionRange(joinPos,joinPos);}
+        },0);
+        scheduleSync();
         return;
       }
     }
@@ -770,6 +809,22 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
                       autoCorrect="on"
                       autoCapitalize="sentences"
                       autoComplete="off"
+                      onBlur={()=>{
+                        // When leaving a character-mode line, if the name isn't in the cast yet,
+                        // show the popup at this line so the writer can confirm adding them.
+                        // Small delay so the popup renders before focus fully leaves.
+                        if(lines[idx]?.mode==="character"){
+                          const name=(refs.current[idx]?.value||textCache.current[idx]||"").trim();
+                          if(name.length>0&&!cast.some(c=>c.name.toUpperCase()===name.toUpperCase())){
+                            const el=refs.current[idx];
+                            if(el){
+                              const r=el.getBoundingClientRect();
+                              const matches=cast.filter(c=>c.name.toUpperCase().startsWith(name.toUpperCase()));
+                              setTimeout(()=>setPopup({visible:true,x:r.left,y:r.bottom+6,query:name,matches}),80);
+                            }
+                          }
+                        }
+                      }}
                       onFocus={()=>{
                         setCurLine(idx);showPill(refs.current[idx]);updateCounter(idx);
                         if(onCharFocus&&lines[idx]?.mode==="character")
@@ -1039,7 +1094,7 @@ const FEATURES_LIST=[
   {step:"05",title:"Your work, always saved",body:"Every keystroke saves automatically. Stored locally on your device.",detail:"Export coming in v1.1. Your data is yours."},
 ];
 
-function Landing({onStart,hasProfile}){
+function Landing({onStart,onSignIn,hasProfile,user}){
   const [section,setSection]=useState("home");
   const [formatIdx,setFormatIdx]=useState(0);
   const goSection=(s)=>setSection(s);
@@ -1052,7 +1107,14 @@ function Landing({onStart,hasProfile}){
         {[["features","Features"],["formats","Formats"],["pricing","Pricing"]].map(([id,label])=>(
           <button key={id} onClick={()=>goSection(id)} style={{background:"none",border:"none",cursor:"pointer",fontSize:13,fontFamily:"inherit",color:section===id?"#000":"#888",fontWeight:section===id?700:400,borderBottom:`1px solid ${section===id?"#000":"transparent"}`,paddingBottom:2}}>{label}</button>
         ))}
-        <button onClick={onStart} style={{padding:"8px 20px",background:"#000",color:"#FFF",border:"none",borderRadius:4,cursor:"pointer",fontSize:13,fontWeight:700,fontFamily:"inherit"}}>{hasProfile?"Open App":"Get Started"}</button>
+        {user?(
+          <button onClick={onStart} style={{padding:"8px 20px",background:"#000",color:"#FFF",border:"none",borderRadius:4,cursor:"pointer",fontSize:13,fontWeight:700,fontFamily:"inherit"}}>Open App</button>
+        ):(
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={onSignIn} style={{padding:"8px 20px",background:"none",color:"#000",border:"1px solid #D0D0D0",borderRadius:4,cursor:"pointer",fontSize:13,fontWeight:600,fontFamily:"inherit"}}>Sign In</button>
+            <button onClick={onStart} style={{padding:"8px 20px",background:"#000",color:"#FFF",border:"none",borderRadius:4,cursor:"pointer",fontSize:13,fontWeight:700,fontFamily:"inherit"}}>Sign Up</button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1064,8 +1126,9 @@ function Landing({onStart,hasProfile}){
         <h1 style={{fontSize:"clamp(52px,9vw,108px)",fontWeight:900,color:"#000",letterSpacing:"-0.04em",lineHeight:0.92,margin:"0 0 32px",maxWidth:800}}>Write<br/>anything.</h1>
         <p style={{fontSize:18,color:"#888",lineHeight:1.7,maxWidth:480,margin:"0 0 48px"}}>Format-aware. Keyboard-first. AI-assisted.<br/>For writers who take the craft seriously.</p>
         <div style={{display:"flex",gap:12}}>
-          <button onClick={onStart} style={{padding:"14px 36px",background:"#000",color:"#FFF",border:"none",borderRadius:4,cursor:"pointer",fontSize:15,fontWeight:700,fontFamily:"inherit"}}>Start writing — it's free</button>
-          <button onClick={()=>goSection("features")} style={{padding:"14px 36px",background:"none",color:"#000",border:"1px solid #D0D0D0",borderRadius:4,cursor:"pointer",fontSize:15,fontFamily:"inherit"}}>See how it works</button>
+          <button onClick={onStart} style={{padding:"14px 36px",background:"#000",color:"#FFF",border:"none",borderRadius:4,cursor:"pointer",fontSize:15,fontWeight:700,fontFamily:"inherit"}}>{user?"Open App":"Sign up — it's free"}</button>
+          {!user&&<button onClick={onSignIn} style={{padding:"14px 36px",background:"none",color:"#000",border:"1px solid #D0D0D0",borderRadius:4,cursor:"pointer",fontSize:15,fontWeight:600,fontFamily:"inherit"}}>Sign in</button>}
+          {!user&&<button onClick={()=>goSection("features")} style={{padding:"14px 36px",background:"none",color:"#888",border:"none",borderRadius:4,cursor:"pointer",fontSize:15,fontFamily:"inherit"}}>See how it works</button>}
         </div>
       </div>
       <div style={{borderTop:"1px solid #F0F0F0",padding:"24px 64px",display:"flex",justifyContent:"center",gap:40,flexWrap:"wrap"}}>
@@ -1192,8 +1255,8 @@ function Landing({onStart,hasProfile}){
   return null;
 }
 
-function AuthScreen({onAuth}){
-  const [mode,setMode]=useState("signin");
+function AuthScreen({onAuth,initialMode="signin"}){
+  const [mode,setMode]=useState(initialMode);
   const [name,setName]=useState("");
   const [email,setEmail]=useState("");
   const [pass,setPass]=useState("");
@@ -1452,7 +1515,7 @@ function ImportModal({profile,onImport,onClose}){
       if(filePayload?.type==="image") messages=[{role:"user",content:[{type:"image",source:{type:"base64",media_type:filePayload.mediaType,data:filePayload.base64}},{type:"text",text:`Extract ALL text and classify each line. Format: ${fmt_label}. Genre: ${genre}. Return ONLY valid JSON array of {text, mode} objects.`}]}];
       else if(filePayload?.type==="pdf") messages=[{role:"user",content:[{type:"document",source:{type:"base64",media_type:"application/pdf",data:filePayload.base64}},{type:"text",text:`Extract ALL text and classify each line. Format: ${fmt_label}. Genre: ${genre}. Return ONLY valid JSON array of {text, mode} objects.`}]}];
       else messages=[{role:"user",content:`Format: ${fmt_label}. Genre: ${genre}.\n\nClassify every line:\n\n${raw.slice(0,8000)}`}];
-      const res=await fetch(_apiUrl,{method:"POST",headers:_headers,body:JSON.stringify({model:"claude-sonnet-4-5",max_tokens:16000,system:"You are a script formatting engine. Classify each line: action, character, dialogue, location, direction, note. For lines you're less than 90% confident about, add uncertain:true. Return ONLY valid JSON array of {text,mode,uncertain?}. No markdown.",messages})});
+      const res=await fetch(_apiUrl,{method:"POST",headers:_headers,body:JSON.stringify({model:"claude-sonnet-4-5",max_tokens:16000,system:"You are a script formatting engine. Classify script content into BLOCKS — not individual lines. CRITICAL: never split a single speech or paragraph into multiple objects just because it contains line breaks. Join all continuation lines into one object using \\n. A dialogue block is everything one character says until the next speaker or action beat — one object. An action block is a full paragraph — one object. Only create a new object when the TYPE changes (e.g. action to character, character to dialogue). Classify each block as: action, character, dialogue, location, direction, note. For blocks you are less than 90% confident about, add uncertain:true. Return ONLY valid JSON array of {text,mode,uncertain?}. No markdown.",messages})});
       const d=await parseApiResponse(res);
       const raw_text=d.content?.filter(b=>b.type==="text").map(b=>b.text).join("")||"[]";
       let parsed;
@@ -2092,6 +2155,7 @@ function Root(){
   const [activeProject,setActiveProject]=useState(null);
   const [dashSave,setDashSave]=useState(null);
   const [dashProjects,setDashProjects]=useState([]);
+  const [authMode,setAuthMode]=useState("signin");
 
   useEffect(()=>{
     const touch=()=>LS.set("sf_last_active",Date.now());touch();
@@ -2105,7 +2169,8 @@ function Root(){
     document.addEventListener("visibilitychange",h);return()=>document.removeEventListener("visibilitychange",h);
   },[user]);
 
-  const enter=()=>{if(!user){setScreen("auth");return;}setScreen("dashboard");};
+  const enter=()=>{if(!user){setAuthMode("signup");setScreen("auth");return;}setScreen("dashboard");};
+  const enterSignIn=()=>{if(!user){setAuthMode("signin");setScreen("auth");return;}setScreen("dashboard");};
   const save=(p)=>{setProfile(p);LS.set("sf_profile",p);setScreen("dashboard");};
   const handleAuth=(u)=>{setUser(u);LS.set("sf_current_user",u);LS.set("sf_last_active",Date.now());if(!profile){setScreen("setup");return;}setScreen("dashboard");};
   const signOut=()=>{LS.set("sf_current_user",null);LS.set("sf_last_active",null);setUser(null);setActiveProject(null);setScreen("landing");};
@@ -2116,8 +2181,8 @@ function Root(){
     const updated=[p,...allProjects];saveFn(updated);setActiveProject(p);setDashSave(()=>saveFn);setDashProjects(updated);setScreen("app");
   };
 
-  if(screen==="landing") return <Landing onStart={enter} hasProfile={!!profile}/>;
-  if(screen==="auth") return <AuthScreen onAuth={handleAuth}/>;
+  if(screen==="landing") return <Landing onStart={enter} onSignIn={enterSignIn} hasProfile={!!profile} user={user}/>;
+  if(screen==="auth") return <AuthScreen onAuth={handleAuth} initialMode={authMode}/>;
   if(screen==="setup") return <Setup existing={profile} onSave={save}/>;
   if(screen==="dashboard"&&user) return <Dashboard user={user} onOpen={openProject} onNew={newProject} onSignOut={signOut}/>;
   return <App
