@@ -690,7 +690,7 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
           return next;
         });
         setCurLine(idx-1);
-        // Place cursor at the join point in the previous line
+        // Place cursor at the join point so repeated Backspace continues merging
         setTimeout(()=>{
           const el=refs.current[idx-1];
           if(el){el.focus();el.setSelectionRange(joinPos,joinPos);}
@@ -1104,11 +1104,8 @@ const FEATURES_LIST=[
   {step:"05",title:"Your work, always saved",body:"Every keystroke saves automatically. Stored locally on your device.",detail:"Export coming in v1.1. Your data is yours."},
 ];
 
-function Landing({onStart,onSignIn,hasProfile,user}){
-  const [section,setSection]=useState("home");
-  const [formatIdx,setFormatIdx]=useState(0);
-  const goSection=(s)=>setSection(s);
-  const NavBar=()=>(
+function LandingNavBar({section,goSection,onStart,onSignIn,user}){
+  return(
     <div style={{padding:"20px 64px 20px 48px",display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:"1px solid #F0F0F0",position:"sticky",top:0,background:"#FFF",zIndex:100}}>
       <button onClick={()=>goSection("home")} style={{background:"none",border:"none",cursor:"pointer",padding:0}}>
         <p style={{margin:0,fontSize:11,fontWeight:900,letterSpacing:"0.25em",textTransform:"uppercase",color:"#000"}}>STORYFORGE</p>
@@ -1128,9 +1125,15 @@ function Landing({onStart,onSignIn,hasProfile,user}){
       </div>
     </div>
   );
+}
+
+function Landing({onStart,onSignIn,hasProfile,user}){
+  const [section,setSection]=useState("home");
+  const [formatIdx,setFormatIdx]=useState(0);
+  const goSection=(s)=>setSection(s);
   if(section==="home") return(
     <div style={{minHeight:"100vh",background:"#FFF",display:"flex",flexDirection:"column"}}>
-      <NavBar/>
+      <LandingNavBar section={section} goSection={goSection} onStart={onStart} onSignIn={onSignIn} user={user}/>
       <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"80px 64px",textAlign:"center"}}>
         <p style={{margin:"0 0 20px",fontSize:11,fontWeight:700,color:"#BBB",letterSpacing:"0.2em",textTransform:"uppercase"}}>Professional Writing Suite</p>
         <h1 style={{fontSize:"clamp(52px,9vw,108px)",fontWeight:900,color:"#000",letterSpacing:"-0.04em",lineHeight:0.92,margin:"0 0 32px",maxWidth:800}}>Write<br/>anything.</h1>
@@ -1158,7 +1161,7 @@ function Landing({onStart,onSignIn,hasProfile,user}){
   );
   if(section==="features") return(
     <div style={{minHeight:"100vh",background:"#FFF",display:"flex",flexDirection:"column"}}>
-      <NavBar/>
+      <LandingNavBar section={section} goSection={goSection} onStart={onStart} onSignIn={onSignIn} user={user}/>
       <div style={{padding:"80px 64px 64px",textAlign:"center",borderBottom:"1px solid #F0F0F0"}}>
         <h2 style={{fontSize:"clamp(36px,6vw,72px)",fontWeight:900,color:"#000",letterSpacing:"-0.03em",lineHeight:0.95,margin:"0 0 24px"}}>Built for the way<br/>writers actually write.</h2>
       </div>
@@ -1182,7 +1185,7 @@ function Landing({onStart,onSignIn,hasProfile,user}){
     const cur=FORMAT_EXAMPLES[formatIdx];
     return(
       <div style={{minHeight:"100vh",background:"#FFF",display:"flex",flexDirection:"column"}}>
-        <NavBar/>
+        <LandingNavBar section={section} goSection={goSection} onStart={onStart} onSignIn={onSignIn} user={user}/>
         <div style={{padding:"0 64px",borderBottom:"1px solid #F0F0F0",display:"flex",gap:0,overflowX:"auto",marginTop:40}}>
           {FORMAT_EXAMPLES.map((f,i)=>(
             <button key={f.id} onClick={()=>setFormatIdx(i)} style={{padding:"16px 20px",background:"none",border:"none",borderBottom:`2px solid ${formatIdx===i?"#000":"transparent"}`,color:formatIdx===i?"#000":"#888",cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:formatIdx===i?700:400,whiteSpace:"nowrap"}}>{f.label}</button>
@@ -1231,7 +1234,7 @@ function Landing({onStart,onSignIn,hasProfile,user}){
   }
   if(section==="pricing") return(
     <div style={{minHeight:"100vh",background:"#FFF",display:"flex",flexDirection:"column"}}>
-      <NavBar/>
+      <LandingNavBar section={section} goSection={goSection} onStart={onStart} onSignIn={onSignIn} user={user}/>
       <div style={{padding:"80px 64px 64px",textAlign:"center",borderBottom:"1px solid #F0F0F0"}}>
         <h2 style={{fontSize:"clamp(36px,6vw,72px)",fontWeight:900,color:"#000",letterSpacing:"-0.03em",lineHeight:0.95,margin:"0 0 24px"}}>Buy once.<br/>Own it forever.</h2>
         <p style={{fontSize:17,color:"#666",maxWidth:520,margin:"0 auto",lineHeight:1.75}}>No subscriptions. No monthly fees.</p>
@@ -2186,9 +2189,14 @@ function Root(){
   const signOut=()=>{LS.set("sf_current_user",null);LS.set("sf_last_active",null);setUser(null);setActiveProject(null);setScreen("landing");};
   const openProject=(p,saveFn,allProjects)=>{setActiveProject(p);setDashSave(()=>saveFn);setDashProjects(allProjects);setScreen("app");};
   const newProject=(saveFn,allProjects)=>{
-    if(!profile) return;
+    if(!profile||!user) return;
     const p={id:Date.now(),title:"Untitled",format:profile.format,genre:profile.genre,lines:[],cast:[],notes:"",moodCards:[],beats:[],sceneGallery:[],created:Date.now()};
-    const updated=[p,...allProjects];saveFn(updated);setActiveProject(p);setDashSave(()=>saveFn);setDashProjects(updated);setScreen("app");
+    const updated=[p,...allProjects];
+    // Write directly to LS with user-scoped key — avoids stale closure from dashSave
+    const projectsKey=`sf_projects_${user.email}`;
+    LS.set(projectsKey,updated);
+    saveFn(updated);
+    setActiveProject(p);setDashSave(()=>saveFn);setDashProjects(updated);setScreen("app");
   };
 
   if(screen==="landing") return <Landing onStart={enter} onSignIn={enterSignIn} hasProfile={!!profile} user={user}/>;
@@ -2204,8 +2212,9 @@ function Root(){
       if(!user||!dashSave) return;
       const projectsKey=`sf_projects_${user.email}`;
       const allProjects=LS.get(projectsKey,[]);
+      // Only update if project still exists — never re-add a deleted project
+      if(!allProjects.find(p=>p.id===updated.id)) return;
       const newAll=allProjects.map(p=>p.id===updated.id?updated:p);
-      if(!newAll.find(p=>p.id===updated.id))newAll.unshift(updated);
       LS.set(projectsKey,newAll);setDashProjects(newAll);
     }}
     onBackToDash={()=>setScreen("dashboard")}
