@@ -902,7 +902,10 @@ function AIPanel({project,cast,onClose,onGoToProfile}){
   const isArtifact=window.location.hostname.includes("claude.ai")||window.location.protocol==="blob:";
   const isLocalDev=window.location.hostname==="localhost"||window.location.hostname==="127.0.0.1";
   const localKey=LS.get("sf_api_key",null);
-  const needsOwnKey=!isArtifact&&!isLocalDev&&!localKey;
+  // Only require user's own key if we're not in Claude artifact sandbox,
+  // not on localhost, not on Vercel (which has /api/chat proxy), and no stored key.
+  const isVercel=window.location.hostname.includes("vercel.app")||window.location.hostname.includes("hilltops");
+  const needsOwnKey=!isArtifact&&!isLocalDev&&!isVercel&&!localKey;
   const run=async(sys,usr)=>{
     if(needsOwnKey){setResponse("Add your Anthropic API key in Profile → API Key to use AI features.");return;}
     setLoading(true);setResponse("");
@@ -1389,8 +1392,18 @@ function Setup({existing,onSave}){
   const STYLES=["Cinematic","Literary","Fast-paced","Dialogue-driven","Atmospheric","Minimalist","Dark & Gritty","Lyrical","Epic","Intimate","Experimental"];
   const steps=[
     {title:"Your name",content:(<div><label style={css.label}>Pen name or real name</label><input style={{...css.input,fontSize:16,padding:"12px 14px"}} value={p.name} onChange={e=>upd("name",e.target.value)} placeholder="e.g. B. Hill" autoFocus onKeyDown={e=>{if(e.key==="Enter"&&p.name.trim().length>0)setStep(s=>s+1);}}/></div>),ok:p.name.trim().length>0},
-    {title:"Primary format",content:(<div style={{display:"flex",flexDirection:"column",gap:6}}>{FORMATS.map(f=>(<button key={f.id} onClick={()=>upd("format",f.id)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"13px 16px",borderRadius:4,cursor:"pointer",border:`1px solid ${p.format===f.id?"#000":"#E8E8E8"}`,background:p.format===f.id?"#000":"#FAFAFA",color:p.format===f.id?"#FFF":"#555",fontFamily:"inherit",fontSize:13,fontWeight:p.format===f.id?700:400,textAlign:"left"}}>{f.label}{p.format===f.id&&<span>✓</span>}</button>))}</div>),ok:true},
-    {title:"Your genres",content:(<div><div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:24}}>{GENRES.map(g=>(<button key={g} onClick={()=>tog("genres",g)} style={{padding:"7px 14px",borderRadius:4,cursor:"pointer",border:`1px solid ${p.genres.includes(g)?"#000":"#E8E8E8"}`,background:p.genres.includes(g)?"#000":"#FAFAFA",color:p.genres.includes(g)?"#FFF":"#666",fontFamily:"inherit",fontSize:12,fontWeight:p.genres.includes(g)?700:400}}>{g}</button>))}</div><label style={css.label}>Default genre</label><select value={p.genre} onChange={e=>upd("genre",e.target.value)} style={css.input}>{GENRES.map(g=><option key={g}>{g}</option>)}</select></div>),ok:true},
+    {title:"Format & Genre",content:(
+      <div style={{display:"flex",flexDirection:"column",gap:20}}>
+        <div>
+          <label style={css.label}>Primary Format</label>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>{FORMATS.map(f=>(<button key={f.id} onClick={()=>upd("format",f.id)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"11px 14px",borderRadius:4,cursor:"pointer",border:`1px solid ${p.format===f.id?"#000":"#E8E8E8"}`,background:p.format===f.id?"#000":"#FAFAFA",color:p.format===f.id?"#FFF":"#555",fontFamily:"inherit",fontSize:13,fontWeight:p.format===f.id?700:400,textAlign:"left"}}>{f.label}{p.format===f.id&&<span>✓</span>}</button>))}</div>
+        </div>
+        <div>
+          <label style={css.label}>Default Genre</label>
+          <select value={p.genre} onChange={e=>upd("genre",e.target.value)} style={css.input}>{GENRES.map(g=><option key={g}>{g}</option>)}</select>
+        </div>
+      </div>
+    ),ok:true},
     {title:"Writing style",content:(<div style={{display:"flex",flexWrap:"wrap",gap:8}}>{STYLES.map(s=>(<button key={s} onClick={()=>tog("styles",s)} style={{padding:"7px 14px",borderRadius:4,cursor:"pointer",border:`1px solid ${p.styles.includes(s)?"#000":"#E8E8E8"}`,background:p.styles.includes(s)?"#000":"#FAFAFA",color:p.styles.includes(s)?"#FFF":"#666",fontFamily:"inherit",fontSize:12,fontWeight:p.styles.includes(s)?700:400}}>{s}</button>))}</div>),ok:true},
   ];
   const cur=steps[step];
@@ -1425,8 +1438,8 @@ function MoodBoard({project,onUpdateCards}){
     try{
       const _isArtifact=window.location.hostname.includes("claude.ai")||window.location.protocol==="blob:";
       const _localKey=LS.get("sf_api_key",null);
-      const _apiUrl=(_isArtifact||_localKey)?"https://api.anthropic.com/v1/messages":"/api/chat";
-      const _headers={"Content-Type":"application/json",...(_localKey&&!_isArtifact?{"x-api-key":_localKey,"anthropic-version":"2023-06-01"}:{})};
+      const _apiUrl=_localKey?"https://api.anthropic.com/v1/messages":_isArtifact?"https://api.anthropic.com/v1/messages":"/api/chat";
+      const _headers={"Content-Type":"application/json",...(_localKey?{"x-api-key":_localKey,"anthropic-version":"2023-06-01"}:{})};
       const res=await fetch(_apiUrl,{method:"POST",headers:_headers,body:JSON.stringify({model:"claude-sonnet-4-5",max_tokens:1000,system:"You are a creative research assistant. Return ONLY valid JSON — array of objects with keys: title (3-5 words), body (2-3 sentence insight), tag (one word: Tone/World/Character/Style/Theme/Visual). No markdown.",messages:[{role:"user",content:`Research this for a writing project. Extract 4-6 key creative reference points:\n\n${prompt}`}]})});
       const d=await parseApiResponse(res);
       const raw=d.content?.filter(b=>b.type==="text").map(b=>b.text).join("")||"[]";
@@ -1521,8 +1534,8 @@ function ImportModal({profile,onImport,onClose}){
     const fmt_label=FORMATS.find(f=>f.id===fmt)?.label||"Script";
     const _isArtifact=window.location.hostname.includes("claude.ai")||window.location.protocol==="blob:";
     const _localKey=LS.get("sf_api_key",null);
-    const _apiUrl=(_isArtifact||_localKey)?"https://api.anthropic.com/v1/messages":"/api/chat";
-    const _headers={"Content-Type":"application/json",...(_localKey&&!_isArtifact?{"x-api-key":_localKey,"anthropic-version":"2023-06-01"}:{})};
+    const _apiUrl=_localKey?"https://api.anthropic.com/v1/messages":_isArtifact?"https://api.anthropic.com/v1/messages":"/api/chat";
+    const _headers={"Content-Type":"application/json",...(_localKey?{"x-api-key":_localKey,"anthropic-version":"2023-06-01"}:{})};
     try{
       let messages;
       if(filePayload?.type==="image") messages=[{role:"user",content:[{type:"image",source:{type:"base64",media_type:filePayload.mediaType,data:filePayload.base64}},{type:"text",text:`Extract ALL text and classify each line. Format: ${fmt_label}. Genre: ${genre}. Return ONLY valid JSON array of {text, mode} objects.`}]}];
@@ -1915,7 +1928,7 @@ const NAV_ITEMS=[
   {id:"notes",icon:"≡",label:"Notes"},{id:"profile",icon:"◎",label:"Profile"},
 ];
 
-function App({profile,onEditProfile,onHome,initialProject,onSaveProject,onBackToDash,user,onSignOut}){
+function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,onSaveProject,onBackToDash,user,onSignOut}){
   const [nav,setNav]=useState("write");
   const [projects,setProjects]=useState(()=>initialProject?[initialProject]:LS.get("sf_projects",[]));
   const [activeId,setActiveId]=useState(()=>initialProject?.id||null);
@@ -2131,16 +2144,36 @@ function App({profile,onEditProfile,onHome,initialProject,onSaveProject,onBackTo
           {nav==="profile"&&(
             <div style={{flex:1,overflowY:"auto",padding:"48px 64px"}}>
               <div style={{maxWidth:480}}>
-                <h2 style={{fontSize:28,fontWeight:900,color:"#000",margin:"0 0 32px",letterSpacing:"-0.02em"}}>{profile.name}</h2>
-                <div style={{borderTop:"1px solid #EBEBEB"}}>
-                  {[["Default Format",FORMATS.find(f=>f.id===profile.format)?.label],["Default Genre",profile.genre],["Genres",profile.genres?.join(", ")||"—"],["Writing Styles",profile.styles?.join(", ")||"—"]].map(([k,v])=>(
-                    <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"14px 0",borderBottom:"1px solid #EBEBEB"}}>
-                      <span style={{fontSize:13,color:"#AAA",fontWeight:600}}>{k}</span>
-                      <span style={{fontSize:13,color:"#000",maxWidth:280,textAlign:"right"}}>{v}</span>
+                <h2 style={{fontSize:28,fontWeight:900,color:"#000",margin:"0 0 32px",letterSpacing:"-0.02em"}}>Profile</h2>
+                <div style={{display:"flex",flexDirection:"column",gap:16}}>
+                  <div>
+                    <label style={css.label}>Name</label>
+                    <input value={profile.name||""} onChange={e=>{const p={...profile,name:e.target.value};LS.set("sf_profile",p);onEditProfile&&onUpdateProfile&&onUpdateProfile({name:e.target.value});}}
+                      style={css.input} placeholder="Your name"/>
+                  </div>
+                  <div>
+                    <label style={css.label}>Default Format</label>
+                    <select value={profile.format||"film"} onChange={e=>{onUpdateProfile&&onUpdateProfile({format:e.target.value});}} style={{...css.input,fontSize:13}}>
+                      {FORMATS.map(f=><option key={f.id} value={f.id}>{f.label}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={css.label}>Default Genre</label>
+                    <select value={profile.genre||"Drama"} onChange={e=>{onUpdateProfile&&onUpdateProfile({genre:e.target.value});}} style={{...css.input,fontSize:13}}>
+                      {GENRES.map(g=><option key={g}>{g}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={css.label}>Writing Styles</label>
+                    <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:4}}>
+                      {["Cinematic","Literary","Fast-paced","Dialogue-driven","Atmospheric","Minimalist","Dark & Gritty","Lyrical","Epic","Intimate","Experimental"].map(s=>{
+                        const active=(profile.styles||[]).includes(s);
+                        return <button key={s} onClick={()=>{const styles=active?(profile.styles||[]).filter(x=>x!==s):[...(profile.styles||[]),s];onUpdateProfile&&onUpdateProfile({styles});}}
+                          style={{padding:"6px 12px",borderRadius:4,cursor:"pointer",border:`1px solid ${active?"#000":"#E8E8E8"}`,background:active?"#000":"#FAFAFA",color:active?"#FFF":"#666",fontFamily:"inherit",fontSize:12,fontWeight:active?700:400}}>{s}</button>;
+                      })}
                     </div>
-                  ))}
+                  </div>
                 </div>
-                <button onClick={onEditProfile} style={{marginTop:24,padding:"10px 24px",background:"#000",color:"#FFF",border:"none",borderRadius:4,cursor:"pointer",fontFamily:"inherit",fontWeight:700}}>Edit Profile</button>
                 <div style={{marginTop:40,paddingTop:32,borderTop:"1px solid #EBEBEB"}}>
                   <p style={{margin:"0 0 6px",fontSize:13,fontWeight:700,color:"#000"}}>Anthropic API Key</p>
                   <p style={{margin:"0 0 14px",fontSize:12,color:"#AAA",lineHeight:1.6}}>Paste your key from console.anthropic.com to enable AI features.</p>
@@ -2223,6 +2256,7 @@ function Root(){
   const enter=()=>{if(!user){setAuthMode("signup");setScreen("auth");return;}setScreen("dashboard");};
   const enterSignIn=()=>{if(!user){setAuthMode("signin");setScreen("auth");return;}setScreen("dashboard");};
   const save=(p)=>{setProfile(p);LS.set("sf_profile",p);setScreen("dashboard");};
+  const updateProfile=(changes)=>{const p={...profile,...changes};setProfile(p);LS.set("sf_profile",p);};
   const handleAuth=(u)=>{setUser(u);LS.set("sf_current_user",u);LS.set("sf_last_active",Date.now());if(!profile){setScreen("setup");return;}setScreen("dashboard");};
   const signOut=()=>{LS.set("sf_current_user",null);LS.set("sf_last_active",null);setUser(null);setActiveProject(null);setScreen("landing");};
   const openProject=(p,saveFn,allProjects)=>{setActiveProject(p);setDashSave(()=>saveFn);setDashProjects(allProjects);setScreen("app");};
@@ -2244,6 +2278,7 @@ function Root(){
   return <App
     profile={profile||{name:user?.name||"",format:"film",genre:"Dark Fantasy",genres:[],styles:[]}}
     onEditProfile={()=>setScreen("setup")}
+    onUpdateProfile={updateProfile}
     onHome={()=>setScreen("dashboard")}
     initialProject={activeProject}
     user={user}
