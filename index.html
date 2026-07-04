@@ -1141,7 +1141,7 @@ function Landing({onStart,onSignIn,hasProfile,user}){
         <div style={{display:"flex",gap:12}}>
           <button onClick={onStart} style={{padding:"14px 36px",background:"#000",color:"#FFF",border:"none",borderRadius:4,cursor:"pointer",fontSize:15,fontWeight:700,fontFamily:"inherit"}}>{user?"Open App":"Sign up — it's free"}</button>
           {!user&&<button onClick={onSignIn} style={{padding:"14px 36px",background:"none",color:"#000",border:"1px solid #D0D0D0",borderRadius:4,cursor:"pointer",fontSize:15,fontWeight:600,fontFamily:"inherit"}}>Sign in</button>}
-          {!user&&<button onClick={()=>goSection("features")} style={{padding:"14px 36px",background:"none",color:"#888",border:"none",borderRadius:4,cursor:"pointer",fontSize:15,fontFamily:"inherit"}}>See how it works</button>}
+          <button onClick={()=>goSection("features")} style={{padding:"14px 36px",background:"none",color:"#888",border:"none",borderRadius:4,cursor:"pointer",fontSize:15,fontFamily:"inherit"}}>See how it works</button>
         </div>
       </div>
       <div style={{borderTop:"1px solid #F0F0F0",padding:"24px 64px",display:"flex",justifyContent:"center",gap:40,flexWrap:"wrap"}}>
@@ -1911,7 +1911,7 @@ const NAV_ITEMS=[
   {id:"notes",icon:"≡",label:"Notes"},{id:"profile",icon:"◎",label:"Profile"},
 ];
 
-function App({profile,onEditProfile,onHome,initialProject,onSaveProject,onBackToDash}){
+function App({profile,onEditProfile,onHome,initialProject,onSaveProject,onBackToDash,user,onSignOut}){
   const [nav,setNav]=useState("write");
   const [projects,setProjects]=useState(()=>initialProject?[initialProject]:LS.get("sf_projects",[]));
   const [activeId,setActiveId]=useState(()=>initialProject?.id||null);
@@ -1932,6 +1932,7 @@ function App({profile,onEditProfile,onHome,initialProject,onSaveProject,onBackTo
   const [charPanelOpen,setCharPanelOpen]=useState(false);
   const [currentCharName,setCurrentCharName]=useState("");
   const [titlePageEditorOpen,setTitlePageEditorOpen]=useState(false);
+  const [userMenuOpen,setUserMenuOpen]=useState(false);
 
   const active=projects.find(p=>p.id===activeId)||projects[0]||null;
 
@@ -1951,9 +1952,11 @@ function App({profile,onEditProfile,onHome,initialProject,onSaveProject,onBackTo
       if(e.key==="m"){e.preventDefault();setSceneNavCollapsed(o=>!o);}
       if(e.key==="/"){e.preventDefault();setShortcutsOpen(o=>!o);}
     };
+    const closeMenu=(e)=>{if(userMenuOpen) setUserMenuOpen(false);};
     window.addEventListener("keydown",handler);
-    return()=>window.removeEventListener("keydown",handler);
-  },[]);
+    window.addEventListener("click",closeMenu);
+    return()=>{window.removeEventListener("keydown",handler);window.removeEventListener("click",closeMenu);};
+  },[userMenuOpen]);
 
   useEffect(()=>{
     const wc=(active?.lines||[]).reduce((acc,l)=>acc+(l.text||"").split(/\s+/).filter(Boolean).length,0);
@@ -2023,7 +2026,38 @@ function App({profile,onEditProfile,onHome,initialProject,onSaveProject,onBackTo
             </div>
           );
         })}
-        <div style={{marginTop:"auto",marginBottom:16,width:"100%",display:"flex",justifyContent:"center"}}>
+        <div style={{marginTop:"auto",display:"flex",flexDirection:"column",alignItems:"center",gap:8,marginBottom:16,width:"100%"}}>
+          {/* User avatar */}
+          {user&&(()=>{
+            const initials=(user.name||profile?.name||"?").trim().split(/\s+/).map(w=>w[0]?.toUpperCase()||"").slice(0,2).join("");
+            return(
+              <div style={{position:"relative",width:"100%",display:"flex",justifyContent:"center"}}>
+                <button onClick={(e)=>{e.stopPropagation();setUserMenuOpen(o=>!o);}}
+                  style={{width:32,height:32,borderRadius:"50%",background:"#000",border:"none",cursor:"pointer",
+                    display:"flex",alignItems:"center",justifyContent:"center",
+                    fontSize:10,fontWeight:800,color:"#FFF",letterSpacing:"0.04em",flexShrink:0}}>
+                  {initials}
+                </button>
+                {userMenuOpen&&(
+                  <div style={{position:"absolute",bottom:"100%",left:44,marginBottom:4,
+                    background:"#FFF",border:"1px solid #E0E0E0",borderRadius:6,
+                    boxShadow:"0 4px 16px rgba(0,0,0,0.12)",zIndex:700,minWidth:180,overflow:"hidden"}}>
+                    <div style={{padding:"12px 14px",borderBottom:"1px solid #F0F0F0"}}>
+                      <p style={{margin:0,fontSize:12,fontWeight:700,color:"#000"}}>{user.name||profile?.name||""}</p>
+                      <p style={{margin:"2px 0 0",fontSize:11,color:"#AAA"}}>{user.email||""}</p>
+                    </div>
+                    <button onClick={()=>{setUserMenuOpen(false);setNav("profile");}}
+                      style={{display:"block",width:"100%",padding:"10px 14px",background:"none",border:"none",
+                        borderBottom:"1px solid #F5F5F5",cursor:"pointer",textAlign:"left",
+                        fontFamily:"inherit",fontSize:12,color:"#555"}}>Edit Profile</button>
+                    <button onClick={()=>{setUserMenuOpen(false);onSignOut&&onSignOut();}}
+                      style={{display:"block",width:"100%",padding:"10px 14px",background:"none",border:"none",
+                        cursor:"pointer",textAlign:"left",fontFamily:"inherit",fontSize:12,color:"#555"}}>Sign out</button>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           <button onClick={newProject} style={{width:36,height:36,borderRadius:8,border:"1px dashed #CCC",background:"none",color:"#CCC",cursor:"pointer",fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
         </div>
       </div>
@@ -2208,6 +2242,8 @@ function Root(){
     onEditProfile={()=>setScreen("setup")}
     onHome={()=>setScreen("dashboard")}
     initialProject={activeProject}
+    user={user}
+    onSignOut={signOut}
     onSaveProject={(updated)=>{
       if(!user||!dashSave) return;
       const projectsKey=`sf_projects_${user.email}`;
