@@ -1475,6 +1475,97 @@ function MoodBoard({project,onUpdateCards}){
   );
 }
 
+// ─── RULE-BASED SCRIPT CLASSIFIER (no AI — instant, local) ───────────────────
+// Classifies a single trimmed line into a mode, or returns null to let the
+// caller decide (continuation of dialogue vs. a fresh action beat).
+function classifyScriptLine(t,format){
+  const isProse=format==="novel";
+  const isCue=format==="audiobook"||format==="voiceover";
+  const isPanel=format==="anime"||format==="manga";
+  const isStage=format==="stage";
+
+  // Parenthetical direction — whole line wrapped in parens, e.g. "(dry)"
+  if(/^\(.+\)$/.test(t)) return "direction";
+
+  // Private notes
+  if(/^\/\//.test(t)) return "note";
+  if(/^\[?\s*NOTE\s*:/i.test(t)) return "note";
+
+  if(isProse){
+    // Quoted speech reads as dialogue; everything else is prose/action.
+    if(/^["“].+["”]?$/.test(t)) return "dialogue";
+    return "action";
+  }
+
+  if(isCue){
+    // Bracketed cue line, e.g. "[NARRATOR]" or "[VO — NARRATOR, warm...]"
+    if(/^\[.+\]$/.test(t)) return "character";
+    // All-caps, non-bracketed line — a chapter/track heading, not narration
+    if(!/[a-z]/.test(t)&&/[A-Z]/.test(t)&&t.length<=80) return "action";
+    return "dialogue";
+  }
+
+  if(isPanel){
+    if(/^(SCENE|PAGE|PANEL)\b/i.test(t)) return "location";
+    if(/^\[\s*SETTING\b/i.test(t)) return "action";
+  }
+
+  // Scene headings / sluglines
+  if(/^(INT|EXT|EST|I\/E)[\.\s]/i.test(t)) return "location";
+  if(isStage&&/^(ACT\s+\w+|SCENE\s+[\w:]+)/i.test(t)) return "location";
+  if(/^(EPISODE\s*\d|COLD OPEN|TEASER)\b/i.test(t)) return "location";
+
+  // Transitions read as action beats, not character cues
+  if(/^(FADE IN|FADE OUT|CUT TO|SMASH CUT TO|MATCH CUT TO|DISSOLVE TO)\b/i.test(t)) return "action";
+
+  // Character cue: short, no lowercase letters (ignoring a trailing
+  // parenthetical like "(V.O.)" or "(CONT'D)"), not a colon-heading.
+  const stripped=t.replace(/\s*\([^)]*\)\s*$/,"").trim();
+  if(stripped.length>0&&stripped.length<=45&&!/[a-z]/.test(stripped)&&/[A-Z]/.test(stripped)&&!t.endsWith(":")){
+    return "character";
+  }
+  return null;
+}
+
+// Extracts a cast-worthy name from a classified "character" block's text.
+// Handles both bare screenplay cues ("KAEL (V.O.)") and bracketed audio
+// cues ("[DIALOGUE — Kael, internal]").
+function extractCueName(text,format){
+  let t=text.trim();
+  if((format==="audiobook"||format==="voiceover")&&/^\[.+\]$/.test(t)){
+    t=t.slice(1,-1).trim();
+    const parts=t.split(/—|--/);
+    if(parts.length>1) t=parts.slice(1).join("-").trim();
+    t=t.split(",")[0].trim();
+  } else {
+    t=t.replace(/\s*\([^)]*\)\s*$/,"").trim();
+  }
+  return t.toUpperCase();
+}
+
+const CUE_NAME_DENYLIST=new Set(["NARRATOR","VO","V.O.","ANNOUNCER","SFX","MUSIC","DIALOGUE","NARRATION","VOICE OVER"]);
+
+// Groups classified lines into blocks (continuation lines of the same mode
+// merge, joined by \n) — same "block" concept the AI classifier used.
+function classifyScriptText(rawText,format){
+  const rawLines=rawText.split("\n");
+  const blocks=[];
+  let current=null;
+  let lastRealMode="action";
+  const flush=()=>{if(current&&current.lines.length>0) blocks.push({text:current.lines.join("\n"),mode:current.mode});current=null;};
+  for(const raw of rawLines){
+    const trimmed=raw.replace(/[ \t]+/g," ").trim();
+    if(trimmed.length===0){flush();lastRealMode="action";continue;}
+    let mode=classifyScriptLine(trimmed,format);
+    if(mode===null) mode=(lastRealMode==="character"||lastRealMode==="dialogue")?"dialogue":"action";
+    lastRealMode=mode;
+    if(current&&current.mode===mode) current.lines.push(trimmed);
+    else{flush();current={mode,lines:[trimmed]};}
+  }
+  flush();
+  return blocks;
+}
+
 function ImportModal({profile,onImport,onClose}){
   const [uploadMode,setUploadMode]=useState("smart");
   const [raw,setRaw]=useState("");
@@ -1532,7 +1623,22 @@ function ImportModal({profile,onImport,onClose}){
   };
   const doImport=async()=>{
     if(!canImport) return;
-    setLoading(true);setError("");setStatus("AI is reading your script...");
+    setError("");
+    // Plain/extracted text (paste, .txt, DOCX, or a PDF with a real text layer)
+    // is classified locally — no API call, runs instantly.
+    if(!filePayload){
+      const parsed=classifyScriptText(raw,fmt);
+      if(parsed.length===0){setError("No lines found.");return;}
+      const charNames=[...new Set(parsed.filter(l=>l.mode==="character"&&l.text?.trim())
+        .map(l=>extractCueName(l.text,fmt)).filter(n=>n&&!CUE_NAME_DENYLIST.has(n)))];
+      const lines=parsed.map((l,i)=>({id:Date.now()+i,text:l.text||"",mode:l.mode||"action"}));
+      const cast=charNames.map((name,i)=>({id:Date.now()+5000+i,name,role:"Supporting",voice:"",notes:""}));
+      onImport({title,format:fmt,genre,lines,cast});
+      return;
+    }
+    // Images and scanned PDFs have no extractable text — the AI vision call
+    // still handles reading + classifying those.
+    setLoading(true);setStatus("AI is reading your file...");
     const fmt_label=FORMATS.find(f=>f.id===fmt)?.label||"Script";
     const _isArtifact=window.location.hostname.includes("claude.ai")||window.location.protocol==="blob:";
     const _localKey=LS.get("sf_api_key",null);
@@ -1540,12 +1646,8 @@ function ImportModal({profile,onImport,onClose}){
     const _headers={"Content-Type":"application/json",...(_localKey?{"x-api-key":_localKey,"anthropic-version":"2023-06-01"}:{})};
     try{
       let messages;
-      if(filePayload?.type==="image") messages=[{role:"user",content:[{type:"image",source:{type:"base64",media_type:filePayload.mediaType,data:filePayload.base64}},{type:"text",text:`Extract ALL text and classify each line. Format: ${fmt_label}. Genre: ${genre}. Return ONLY valid JSON array of {text, mode} objects.`}]}];
-      else if(filePayload?.type==="pdf") messages=[{role:"user",content:[{type:"document",source:{type:"base64",media_type:"application/pdf",data:filePayload.base64}},{type:"text",text:`Extract ALL text and classify each line. Format: ${fmt_label}. Genre: ${genre}. Return ONLY valid JSON array of {text, mode} objects.`}]}];
-      else{
-        const normalizedRaw=raw.split("\n").map(l=>l.replace(/[ \t]+/g," ").trim()).join("\n");
-        messages=[{role:"user",content:`Format: ${fmt_label}. Genre: ${genre}.\n\nClassify every line:\n\n${normalizedRaw.slice(0,8000)}`}];
-      }
+      if(filePayload.type==="image") messages=[{role:"user",content:[{type:"image",source:{type:"base64",media_type:filePayload.mediaType,data:filePayload.base64}},{type:"text",text:`Extract ALL text and classify each line. Format: ${fmt_label}. Genre: ${genre}. Return ONLY valid JSON array of {text, mode} objects.`}]}];
+      else messages=[{role:"user",content:[{type:"document",source:{type:"base64",media_type:"application/pdf",data:filePayload.base64}},{type:"text",text:`Extract ALL text and classify each line. Format: ${fmt_label}. Genre: ${genre}. Return ONLY valid JSON array of {text, mode} objects.`}]}];
       const res=await fetch(_apiUrl,{method:"POST",headers:_headers,body:JSON.stringify({model:"claude-sonnet-4-5",max_tokens:4096,system:"You are a script formatting engine. Classify script content into BLOCKS — not individual lines. CRITICAL: never split a single speech or paragraph into multiple objects just because it contains line breaks. Join all continuation lines into one object using \\n. A dialogue block is everything one character says until the next speaker or action beat — one object. An action block is a full paragraph — one object. Only create a new object when the TYPE changes (e.g. action to character, character to dialogue). Classify each block as: action, character, dialogue, location, direction, note. For blocks you are less than 90% confident about, add uncertain:true. Return ONLY valid JSON array of {text,mode,uncertain?}. No markdown.",messages})});
       const d=await parseApiResponse(res);
       const raw_text=d.content?.filter(b=>b.type==="text").map(b=>b.text).join("")||"[]";
@@ -1579,12 +1681,12 @@ function ImportModal({profile,onImport,onClose}){
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
       <div style={{width:700,maxHeight:"92vh",background:"#FFF",borderRadius:10,display:"flex",flexDirection:"column",overflow:"hidden",boxShadow:"0 8px 40px rgba(0,0,0,0.2)"}}>
         <div style={{padding:"20px 24px",borderBottom:"1px solid #EBEBEB",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <div><p style={{margin:0,fontSize:15,fontWeight:800,color:"#000"}}>Import Script</p><p style={{margin:"3px 0 0",fontSize:12,color:"#AAA"}}>Smart (AI-formatted) or Text (instant, no AI)</p></div>
+          <div><p style={{margin:0,fontSize:15,fontWeight:800,color:"#000"}}>Import Script</p><p style={{margin:"3px 0 0",fontSize:12,color:"#AAA"}}>Smart (instant local formatting — AI only reads images/scans) or Text (no formatting)</p></div>
           <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",fontSize:22,color:"#AAA",lineHeight:1,padding:4}}>×</button>
         </div>
         <div style={{flex:1,overflowY:"auto",padding:24,display:"flex",flexDirection:"column",gap:16}}>
           <div style={{display:"flex",gap:8}}>
-            {[["smart","✦ Smart Upload","AI reads & classifies every line"],["text","Text Upload","No AI — instant, mark lines yourself"]].map(([id,lbl,sub])=>(
+            {[["smart","✦ Smart Upload","Classifies every line instantly (AI only for images/scans)"],["text","Text Upload","No formatting — instant, mark lines yourself"]].map(([id,lbl,sub])=>(
               <button key={id} onClick={()=>setUploadMode(id)} style={{flex:1,padding:"10px 14px",borderRadius:6,cursor:"pointer",fontFamily:"inherit",textAlign:"left",border:`1px solid ${uploadMode===id?"#000":"#E0E0E0"}`,background:uploadMode===id?"#000":"#FAFAFA",color:uploadMode===id?"#FFF":"#555"}}>
                 <span style={{fontSize:13,fontWeight:700}}>{lbl}</span>
                 <span style={{display:"block",fontSize:11,marginTop:2,color:uploadMode===id?"#BBB":"#AAA"}}>{sub}</span>
@@ -1650,7 +1752,7 @@ function ImportModal({profile,onImport,onClose}){
           {error&&<p style={{fontSize:12,color:"#888",margin:0}}>{error}</p>}
         </div>
         <div style={{padding:"16px 24px",borderTop:"1px solid #EBEBEB",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
-          <p style={{margin:0,fontSize:11,color:loading?"#555":"#CCC"}}>{loading?status:canImport?(uploadMode==="smart"?"Ready to import":"Ready — imports instantly."):"Upload a file or paste text above"}</p>
+          <p style={{margin:0,fontSize:11,color:loading?"#555":"#CCC"}}>{loading?status:canImport?(uploadMode==="smart"&&filePayload?"Ready to import":"Ready — imports instantly."):"Upload a file or paste text above"}</p>
           <div style={{display:"flex",gap:10}}>
             <button onClick={onClose} style={{padding:"9px 20px",background:"none",border:"1px solid #D0D0D0",borderRadius:4,cursor:"pointer",fontFamily:"inherit",fontSize:13,color:"#666"}}>Cancel</button>
             <button onClick={uploadMode==="smart"?doImport:doTextImport} disabled={loading||!canImport} style={{padding:"9px 24px",background:"#000",color:"#FFF",border:"none",borderRadius:4,cursor:loading||!canImport?"not-allowed":"pointer",fontFamily:"inherit",fontWeight:700,fontSize:13,opacity:loading||!canImport?0.4:1}}>{loading?"Importing...":uploadMode==="smart"?"Import & Format":"Import as Text"}</button>
@@ -2153,7 +2255,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,onSave
                 <div style={{display:"flex",flexDirection:"column",gap:16}}>
                   <div>
                     <label style={css.label}>Name</label>
-                    <input value={profile.name||""} onChange={e=>{const p={...profile,name:e.target.value};LS.set("sf_profile",p);onEditProfile&&onUpdateProfile&&onUpdateProfile({name:e.target.value});}}
+                    <input value={profile.name||""} onChange={e=>{onUpdateProfile&&onUpdateProfile({name:e.target.value});}}
                       style={css.input} placeholder="Your name"/>
                   </div>
                   <div>
@@ -2195,8 +2297,9 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,onSave
           <TitlePageEditor project={active} profile={profile}
             onSave={(form)=>{
               updateProject(active.id,{title:form.title,draft:form.draft});
-              const updatedProfile={...profile,company:form.company,address:form.address,phone:form.phone,email:form.email};
-              LS.set("sf_profile",updatedProfile);
+              const profileChanges={company:form.company,address:form.address,phone:form.phone,email:form.email};
+              if(onUpdateProfile) onUpdateProfile(profileChanges);
+              else LS.set("sf_profile",{...profile,...profileChanges});
               setTitlePageEditorOpen(false);
             }}
             onClose={()=>setTitlePageEditorOpen(false)}/>
