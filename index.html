@@ -1674,15 +1674,15 @@ function MoodBoard({project,onUpdateCards}){
   };
   const removeCard=(id)=>onUpdateCards(cards.filter(c=>c.id!==id));
   return(
-    <div style={{flex:1,display:"flex",flexDirection:"column",overflowY:"auto",padding:"48px 64px 80px",maxWidth:900,margin:"0 auto",width:"100%",boxSizing:"border-box"}}>
-      <div style={{marginBottom:32}}><h2 style={{margin:"0 0 6px",fontSize:22,fontWeight:900,color:"#000"}}>Mood Board</h2><p style={{margin:0,fontSize:13,color:"#AAA"}}>Research reference points — injected into AI context when you write.</p></div>
-      <div style={{display:"flex",gap:10,marginBottom:40}}>
-        <input value={prompt} onChange={e=>setPrompt(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!loading)research();}} placeholder="e.g. Kingdom Hearts lore, Blade Runner visual tone..." style={{...css.input,flex:1,fontSize:13}}/>
-        <button onClick={research} disabled={loading||!prompt.trim()} style={{padding:"9px 20px",background:"#000",color:"#FFF",border:"none",borderRadius:4,cursor:loading||!prompt.trim()?"not-allowed":"pointer",fontFamily:"inherit",fontWeight:700,fontSize:13,opacity:loading||!prompt.trim()?0.4:1,whiteSpace:"nowrap"}}>{loading?"Researching...":"Research"}</button>
+    <div style={{flex:1,display:"flex",flexDirection:"column",overflowY:"auto",padding:"24px 20px 60px",width:"100%",boxSizing:"border-box"}}>
+      <div style={{marginBottom:24}}><h2 style={{margin:"0 0 6px",fontSize:18,fontWeight:900,color:"#000"}}>Mood Board</h2><p style={{margin:0,fontSize:12,color:"#AAA"}}>Research reference points — injected into AI context when you write.</p></div>
+      <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:28}}>
+        <input value={prompt} onChange={e=>setPrompt(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!loading)research();}} placeholder="e.g. Kingdom Hearts lore, Blade Runner visual tone..." style={{...css.input,fontSize:13}}/>
+        <button onClick={research} disabled={loading||!prompt.trim()} style={{padding:"9px 20px",background:"#000",color:"#FFF",border:"none",borderRadius:4,cursor:loading||!prompt.trim()?"not-allowed":"pointer",fontFamily:"inherit",fontWeight:700,fontSize:13,opacity:loading||!prompt.trim()?0.4:1}}>{loading?"Researching...":"Research"}</button>
       </div>
       {error&&<p style={{fontSize:12,color:"#888",marginBottom:16}}>{error}</p>}
       {cards.length===0?(<div style={{textAlign:"center",padding:"60px 0",color:"#CCC"}}><p style={{fontSize:32,margin:"0 0 12px"}}>◈</p><p style={{fontSize:13,margin:0}}>No reference cards yet.</p></div>):(
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:16}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:12}}>
           {cards.map(card=>(<div key={card.id} style={{background:"#FAFAFA",border:"1px solid #EBEBEB",borderRadius:8,padding:"16px 18px"}}>
             <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:8}}>
               <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.12em",textTransform:"uppercase",padding:"3px 8px",borderRadius:3,background:"#F0F0F0",color:"#555",border:"1px solid #E0E0E0"}}>{card.tag}</span>
@@ -2335,23 +2335,23 @@ function BeatBoard({project,onUpdate}){
   const handleDragStart=(e,idx)=>{setDragging(idx);e.dataTransfer.effectAllowed="move";};
   const handleDrop=(e,idx)=>{e.preventDefault();if(dragging===null||dragging===idx)return;const next=[...beats];const[moved]=next.splice(dragging,1);next.splice(idx,0,moved);save(next);setDragging(null);setDragOver(null);};
   return(
-    <div style={{flex:1,overflowY:"auto",padding:"32px 40px 80px",background:"#FAFAFA"}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:28}}>
-        <div><h2 style={{margin:"0 0 4px",fontSize:18,fontWeight:900,color:"#000"}}>Beat Board</h2><p style={{margin:0,fontSize:12,color:"#AAA"}}>Drag to reorder — planning only.</p></div>
-        <button onClick={addBeat} style={{padding:"7px 16px",background:"#000",color:"#FFF",border:"none",borderRadius:4,cursor:"pointer",fontFamily:"inherit",fontWeight:700,fontSize:12}}>+ Beat</button>
+    <div style={{flex:1,overflowY:"auto",padding:"20px 20px 60px",background:"#FAFAFA"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:22}}>
+        <div><h2 style={{margin:"0 0 4px",fontSize:16,fontWeight:900,color:"#000"}}>Beat Board</h2><p style={{margin:0,fontSize:11,color:"#AAA"}}>Drag to reorder — planning only.</p></div>
+        <button onClick={addBeat} style={{padding:"6px 12px",background:"#000",color:"#FFF",border:"none",borderRadius:4,cursor:"pointer",fontFamily:"inherit",fontWeight:700,fontSize:11}}>+ Beat</button>
       </div>
       {beats.length===0&&<div style={{textAlign:"center",padding:"60px 0",color:"#CCC"}}><p style={{fontSize:13,margin:0}}>No beats yet.</p></div>}
       {ACT_LABELS.map(act=>{
         const group=beats.filter(b=>b.act===act);if(group.length===0)return null;
         return(
-          <div key={act} style={{marginBottom:32}}>
-            <p style={{margin:"0 0 12px",fontSize:9,fontWeight:800,color:"#AAA",letterSpacing:"0.16em",textTransform:"uppercase"}}>{act}</p>
-            <div style={{display:"flex",flexWrap:"wrap",gap:12}}>
+          <div key={act} style={{marginBottom:28}}>
+            <p style={{margin:"0 0 10px",fontSize:9,fontWeight:800,color:"#AAA",letterSpacing:"0.16em",textTransform:"uppercase"}}>{act}</p>
+            <div style={{display:"flex",flexWrap:"wrap",gap:10}}>
               {group.map(beat=>{
                 const globalIdx=beats.indexOf(beat);
                 return(
                   <div key={beat.id} draggable onDragStart={e=>handleDragStart(e,globalIdx)} onDragOver={e=>{e.preventDefault();setDragOver(globalIdx);}} onDrop={e=>handleDrop(e,globalIdx)} onDragEnd={()=>{setDragging(null);setDragOver(null);}}
-                    style={{width:200,background:"#FFF",border:`1px solid ${dragOver===globalIdx?"#000":"#E0E0E0"}`,borderRadius:6,padding:"12px 14px",cursor:"grab",opacity:dragging===globalIdx?0.4:1}}>
+                    style={{width:165,background:"#FFF",border:`1px solid ${dragOver===globalIdx?"#000":"#E0E0E0"}`,borderRadius:6,padding:"11px 12px",cursor:"grab",opacity:dragging===globalIdx?0.4:1}}>
                     {editing===beat.id?(
                       <>
                         <input value={beat.title} onChange={e=>updateBeat(beat.id,{title:e.target.value})} style={{width:"100%",border:"none",borderBottom:"1px solid #E0E0E0",outline:"none",fontSize:12,fontWeight:700,marginBottom:6,background:"transparent",fontFamily:"inherit"}} onBlur={()=>setEditing(null)} autoFocus/>
@@ -2839,7 +2839,9 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
             active?(
               <div style={((beatsOpen&&beatsExpanded)||(moodOpen&&moodExpanded))
                 ?{flex:1,display:"flex",flexDirection:"column",minWidth:0}
-                :{width:"50%",minWidth:340,borderLeft:"1px solid #EBEBEB",display:"flex",flexDirection:"column",flexShrink:0,background:"#FFF"}}>
+                :beatsOpen
+                  ?{width:400,minWidth:360,borderLeft:"1px solid #EBEBEB",display:"flex",flexDirection:"column",flexShrink:0,background:"#FFF"}
+                  :{width:320,minWidth:300,borderLeft:"1px solid #EBEBEB",display:"flex",flexDirection:"column",flexShrink:0,background:"#FFF"}}>
                 <div style={{padding:"8px 14px",borderBottom:"1px solid #EBEBEB",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
                   <span style={{fontSize:10,fontWeight:800,color:"#AAA",letterSpacing:"0.1em",textTransform:"uppercase"}}>{beatsOpen?"Beat Board":"Mood Board"}</span>
                   <div style={{display:"flex",gap:12,alignItems:"center"}}>
@@ -2854,7 +2856,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
                 </div>
               </div>
             ):(
-              <div style={{width:"50%",minWidth:340,borderLeft:"1px solid #EBEBEB",display:"flex",alignItems:"center",justifyContent:"center"}}><p style={{color:"#CCC",fontSize:13}}>Open a project first.</p></div>
+              <div style={{width:beatsOpen?400:320,minWidth:beatsOpen?360:300,borderLeft:"1px solid #EBEBEB",display:"flex",alignItems:"center",justifyContent:"center"}}><p style={{color:"#CCC",fontSize:13}}>Open a project first.</p></div>
             )
           )}
 
