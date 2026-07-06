@@ -2504,7 +2504,7 @@ function SceneGallery({project,onUpdate,currentPage}){
   return(
     <div style={{width:220,minWidth:220,borderLeft:"1px solid #EBEBEB",background:"#FAFAFA",display:"flex",flexDirection:"column",flexShrink:0,overflow:"hidden"}}>
       <div style={{padding:"12px 14px 10px",borderBottom:"1px solid #EBEBEB",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
-        <span style={{fontSize:9,fontWeight:800,color:"#AAA",letterSpacing:"0.14em",textTransform:"uppercase"}}>Scene Gallery</span>
+        <span style={{fontSize:9,fontWeight:800,color:"#AAA",letterSpacing:"0.14em",textTransform:"uppercase"}}>Storyboard / Shot List</span>
         <button onClick={()=>setAdding(o=>!o)} style={{background:"none",border:"none",cursor:"pointer",color:adding?"#000":"#BBB",fontSize:16,lineHeight:1,padding:0}}>+</button>
       </div>
       <div style={{flex:1,overflowY:"auto",padding:"12px 12px 48px"}}>
@@ -2583,6 +2583,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
   const [beatsExpanded,setBeatsExpanded]=useState(false);
   const [moodOpen,setMoodOpen]=useState(false);
   const [moodExpanded,setMoodExpanded]=useState(false);
+  const [boardZoom,setBoardZoom]=useState(1);
   const [hoveredNav,setHoveredNav]=useState(null);
   const [pageInfo,setPageInfo]=useState({cur:1,total:1});
   const [importOpen,setImportOpen]=useState(false);
@@ -2809,7 +2810,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
               <button onClick={()=>setImportOpen(true)} style={{padding:"6px 12px",borderRadius:4,border:"1px solid #D0D0D0",flexShrink:0,background:"#FAFAFA",color:"#555",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>↑ Import</button>
               <button onClick={()=>setExportOpen(true)} style={{padding:"6px 12px",borderRadius:4,border:"1px solid #D0D0D0",flexShrink:0,background:"#FAFAFA",color:"#555",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>↓ Export</button>
               <button onClick={()=>setSceneNavCollapsed(o=>!o)} style={{padding:"6px 10px",borderRadius:4,flexShrink:0,border:`1px solid ${!sceneNavCollapsed?"#000":"#D0D0D0"}`,background:!sceneNavCollapsed?"#000":"#FAFAFA",color:!sceneNavCollapsed?"#FFF":"#555",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>≡ Scenes</button>
-              <button onClick={()=>setGalleryOpen(o=>!o)} style={{padding:"6px 10px",borderRadius:4,flexShrink:0,border:`1px solid ${galleryOpen?"#000":"#D0D0D0"}`,background:galleryOpen?"#000":"#FAFAFA",color:galleryOpen?"#FFF":"#555",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>⬚ Gallery</button>
+              <button onClick={()=>setGalleryOpen(o=>!o)} title="Upload images and link them to a page range — your storyboard/shot list" style={{padding:"6px 10px",borderRadius:4,flexShrink:0,border:`1px solid ${galleryOpen?"#000":"#D0D0D0"}`,background:galleryOpen?"#000":"#FAFAFA",color:galleryOpen?"#FFF":"#555",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>⬚ Storyboard</button>
               <button onClick={()=>setCharPanelOpen(o=>!o)} title="Quick-reference card for whichever character you're currently writing" style={{padding:"6px 10px",borderRadius:4,flexShrink:0,border:`1px solid ${charPanelOpen?"#000":"#D0D0D0"}`,background:charPanelOpen?"#000":"#FAFAFA",color:charPanelOpen?"#FFF":"#555",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>◉ Character Info</button>
               <button onClick={()=>setNotesOpen(o=>!o)} style={{padding:"6px 10px",borderRadius:4,flexShrink:0,border:`1px solid ${notesOpen?"#000":"#D0D0D0"}`,background:notesOpen?"#000":"#FAFAFA",color:notesOpen?"#FFF":"#555",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>≡ Notes</button>
             </>
@@ -2818,6 +2819,41 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
         </div>
 
         <div style={{flex:1,overflow:"hidden",display:"flex",minWidth:0}}>
+          {/* Beat Board / Mood Board: now docked on the LEFT of the script.
+              Defaults to a fixed width so the script stays visible
+              alongside it; ⛶ expands to full page (hiding the script,
+              without unmounting it — SmartEditor is only display:none'd
+              below, so nothing typed is lost). +/- controls a shared zoom
+              level (CSS zoom, so layout reflows rather than clipping). */}
+          {nav==="write"&&(beatsOpen||moodOpen)&&(
+            active?(
+              <div style={((beatsOpen&&beatsExpanded)||(moodOpen&&moodExpanded))
+                ?{flex:1,display:"flex",flexDirection:"column",minWidth:0}
+                :beatsOpen
+                  ?{width:400,minWidth:360,borderRight:"1px solid #EBEBEB",display:"flex",flexDirection:"column",flexShrink:0,background:"#FFF"}
+                  :{width:320,minWidth:300,borderRight:"1px solid #EBEBEB",display:"flex",flexDirection:"column",flexShrink:0,background:"#FFF"}}>
+                <div style={{padding:"8px 14px",borderBottom:"1px solid #EBEBEB",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0,gap:8}}>
+                  <span style={{fontSize:10,fontWeight:800,color:"#AAA",letterSpacing:"0.1em",textTransform:"uppercase"}}>{beatsOpen?"Beat Board":"Mood Board"}</span>
+                  <div style={{display:"flex",gap:10,alignItems:"center",flexShrink:0}}>
+                    <button onClick={()=>setBoardZoom(z=>Math.max(0.6,+(z-0.1).toFixed(2)))} title="Zoom out" style={{background:"none",border:"1px solid #E0E0E0",borderRadius:3,width:18,height:18,cursor:"pointer",color:"#999",fontSize:11,lineHeight:1,padding:0}}>−</button>
+                    <span style={{fontSize:9,color:"#BBB",minWidth:28,textAlign:"center"}}>{Math.round(boardZoom*100)}%</span>
+                    <button onClick={()=>setBoardZoom(z=>Math.min(1.8,+(z+0.1).toFixed(2)))} title="Zoom in" style={{background:"none",border:"1px solid #E0E0E0",borderRadius:3,width:18,height:18,cursor:"pointer",color:"#999",fontSize:11,lineHeight:1,padding:0}}>+</button>
+                    <div style={{width:1,height:14,background:"#EBEBEB"}}/>
+                    <button onClick={()=>{if(beatsOpen)setBeatsExpanded(o=>!o);else setMoodExpanded(o=>!o);}}
+                      title={(beatsOpen?beatsExpanded:moodExpanded)?"Show alongside script":"Expand to full page"}
+                      style={{background:"none",border:"none",cursor:"pointer",color:"#BBB",fontSize:13}}>{(beatsOpen?beatsExpanded:moodExpanded)?"⤢":"⛶"}</button>
+                    <button onClick={()=>{setBeatsOpen(false);setMoodOpen(false);setBeatsExpanded(false);setMoodExpanded(false);}} style={{background:"none",border:"none",cursor:"pointer",color:"#CCC",fontSize:16}}>×</button>
+                  </div>
+                </div>
+                <div style={{flex:1,overflow:"auto",zoom:boardZoom}}>
+                  {beatsOpen?<BeatBoard project={active} onUpdate={updateBeats}/>:<MoodBoard project={active} onUpdateCards={updateMoodCards}/>}
+                </div>
+              </div>
+            ):(
+              <div style={{width:beatsOpen?400:320,minWidth:beatsOpen?360:300,borderRight:"1px solid #EBEBEB",display:"flex",alignItems:"center",justifyContent:"center"}}><p style={{color:"#CCC",fontSize:13}}>Open a project first.</p></div>
+            )
+          )}
+
           {nav==="write"&&(
             active?(
               <div style={{display:((beatsOpen&&beatsExpanded)||(moodOpen&&moodExpanded))?"none":"flex",flex:1,minWidth:0}}>
@@ -2828,35 +2864,6 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
                 <p style={{fontSize:16,color:"#AAA"}}>No project open</p>
                 <button onClick={newProject} style={{padding:"10px 24px",background:"#000",color:"#FFF",border:"none",borderRadius:4,cursor:"pointer",fontFamily:"inherit",fontWeight:700}}>New Project</button>
               </div>
-            )
-          )}
-
-          {/* Beat Board / Mood Board: default to half the page so the script
-              stays visible alongside it; the ⛶ button expands to full page
-              (hiding the script, without unmounting it — SmartEditor is only
-              display:none'd above, so nothing typed is lost). */}
-          {nav==="write"&&(beatsOpen||moodOpen)&&(
-            active?(
-              <div style={((beatsOpen&&beatsExpanded)||(moodOpen&&moodExpanded))
-                ?{flex:1,display:"flex",flexDirection:"column",minWidth:0}
-                :beatsOpen
-                  ?{width:400,minWidth:360,borderLeft:"1px solid #EBEBEB",display:"flex",flexDirection:"column",flexShrink:0,background:"#FFF"}
-                  :{width:320,minWidth:300,borderLeft:"1px solid #EBEBEB",display:"flex",flexDirection:"column",flexShrink:0,background:"#FFF"}}>
-                <div style={{padding:"8px 14px",borderBottom:"1px solid #EBEBEB",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
-                  <span style={{fontSize:10,fontWeight:800,color:"#AAA",letterSpacing:"0.1em",textTransform:"uppercase"}}>{beatsOpen?"Beat Board":"Mood Board"}</span>
-                  <div style={{display:"flex",gap:12,alignItems:"center"}}>
-                    <button onClick={()=>{if(beatsOpen)setBeatsExpanded(o=>!o);else setMoodExpanded(o=>!o);}}
-                      title={(beatsOpen?beatsExpanded:moodExpanded)?"Show alongside script":"Expand to full page"}
-                      style={{background:"none",border:"none",cursor:"pointer",color:"#BBB",fontSize:13}}>{(beatsOpen?beatsExpanded:moodExpanded)?"⤢":"⛶"}</button>
-                    <button onClick={()=>{setBeatsOpen(false);setMoodOpen(false);setBeatsExpanded(false);setMoodExpanded(false);}} style={{background:"none",border:"none",cursor:"pointer",color:"#CCC",fontSize:16}}>×</button>
-                  </div>
-                </div>
-                <div style={{flex:1,overflow:"auto"}}>
-                  {beatsOpen?<BeatBoard project={active} onUpdate={updateBeats}/>:<MoodBoard project={active} onUpdateCards={updateMoodCards}/>}
-                </div>
-              </div>
-            ):(
-              <div style={{width:beatsOpen?400:320,minWidth:beatsOpen?360:300,borderLeft:"1px solid #EBEBEB",display:"flex",alignItems:"center",justifyContent:"center"}}><p style={{color:"#CCC",fontSize:13}}>Open a project first.</p></div>
             )
           )}
 
