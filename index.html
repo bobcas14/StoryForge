@@ -354,6 +354,7 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
   const [popup,setPopup]=useState({visible:false,x:0,y:0,query:"",matches:[]});
   const [contextMenu,setContextMenu]=useState(null);
   const [inlineNote,setInlineNote]=useState(null);
+  const [selectAllActive,setSelectAllActive]=useState(false);
 
   const refs=useRef({});
   const textCache=useRef({});
@@ -457,6 +458,28 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
     return()=>cancelAnimationFrame(raf);
   },[lines.length]);
 
+  // ── SELECT ALL: copy full text, exit on any other interaction ────────────
+  useEffect(()=>{
+    if(!selectAllActive) return;
+    const onCopy=(e)=>{
+      const text=lines.map((l,i)=>textCache.current[i]??l.text??"").join("\n");
+      e.clipboardData.setData("text/plain",text);
+      e.preventDefault();
+    };
+    const exit=(e)=>{
+      if((e.ctrlKey||e.metaKey)&&e.key==="c") return; // let Copy fire first
+      setSelectAllActive(false);
+    };
+    document.addEventListener("copy",onCopy);
+    document.addEventListener("keydown",exit);
+    document.addEventListener("mousedown",exit);
+    return()=>{
+      document.removeEventListener("copy",onCopy);
+      document.removeEventListener("keydown",exit);
+      document.removeEventListener("mousedown",exit);
+    };
+  },[selectAllActive,lines]);
+
   useEffect(()=>{
     if(!focusMode) return;
     const el=wrapperRefs.current[curLine];
@@ -559,8 +582,12 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
     }
     if((e.ctrlKey||e.metaKey)&&e.key==="a"){
       e.preventDefault();
-      const el=refs.current[idx];
-      if(el){el.focus();el.select();}
+      // Bug fix: this only ever selected the current line's own textarea —
+      // each line is a separate uncontrolled <textarea>, so there's no
+      // native way to visually select across all of them at once. We
+      // highlight every line and intercept Copy to build the full text,
+      // which is what "Select All" is actually expected to do.
+      setSelectAllActive(true);
       return;
     }
     // ── ⌘Backspace: delete entire line regardless of content ──────────────
@@ -868,7 +895,7 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
                       </div>
                     );
                   })()}
-                  <div ref={el=>{wrapperRefs.current[idx]=el;}} style={{position:"relative",...wrapperStyle(line.mode,format)}}>
+                  <div ref={el=>{wrapperRefs.current[idx]=el;}} style={{position:"relative",...wrapperStyle(line.mode,format),...(selectAllActive?{background:darkCanvas?"rgba(255,255,255,0.12)":"rgba(0,0,0,0.07)"}:{})}}>
                     <textarea
                       ref={el=>{refs.current[idx]=el;if(el) autoGrowOnMount(el,line.text);}}
                       defaultValue={line.text}
@@ -1062,9 +1089,12 @@ function AIPanel({project,cast,onClose,onGoToProfile}){
 }
 
 // ─── CAST PANEL ───────────────────────────────────────────────────────────────
-function CastPanel({cast,onUpdate,onAdd,onDelete,onClose}){
+function CastPanel({cast,lines,onUpdate,onAdd,onDelete,onClose,onJumpTo}){
   const [sel,setSel]=useState(0);
   const [saved,setSaved]=useState(false);
+  const [search,setSearch]=useState("");
+  const [checked,setChecked]=useState(()=>new Set());
+  const [mode,setMode]=useState("profile"); // "profile" | "dialogue"
   const imgInputRef=useRef(null);
   const cur=cast[sel];
   const upd=(field,val)=>onUpdate(cast[sel].id,field,val);
@@ -1074,6 +1104,36 @@ function CastPanel({cast,onUpdate,onAdd,onDelete,onClose}){
     const reader=new FileReader();reader.onload=(ev)=>upd("image",ev.target.result);
     reader.readAsDataURL(file);e.target.value="";
   };
+  const filtered=cast.filter(c=>(c.name||"").toLowerCase().includes(search.toLowerCase()));
+  const toggleChecked=(id)=>setChecked(prev=>{const next=new Set(prev);if(next.has(id))next.delete(id);else next.add(id);return next;});
+
+  // Cast → Search: dialogue lines, page numbers, and scenes for the
+  // selected character(s). Uses the same page-per-55-lines approximation
+  // SceneNavigator already uses elsewhere, for consistency.
+  const dialogueReport=useMemo(()=>{
+    if(mode!=="dialogue"||!lines) return [];
+    const targetIds=checked.size>0?checked:(cur?new Set([cur.id]):new Set());
+    const targetNames=cast.filter(c=>targetIds.has(c.id)).map(c=>(c.name||"").trim().toUpperCase());
+    if(targetNames.length===0) return [];
+    const results=[];
+    let sceneText="(before first scene heading)";
+    lines.forEach((line,idx)=>{
+      if(line.mode==="location"&&line.text?.trim()) sceneText=line.text.trim();
+      if(line.mode==="character"){
+        const base=(line.text||"").replace(/\(.*?\)/g,"").trim().toUpperCase();
+        if(targetNames.includes(base)){
+          let j=idx+1;const dlines=[];
+          while(j<lines.length&&(lines[j].mode==="dialogue"||lines[j].mode==="direction")){
+            if(lines[j].mode==="dialogue"&&lines[j].text?.trim())dlines.push(lines[j].text.trim());
+            j++;
+          }
+          results.push({idx,character:line.text.trim(),scene:sceneText,page:Math.floor(idx/55)+1,text:dlines.join(" ")});
+        }
+      }
+    });
+    return results;
+  },[mode,checked,cur,cast,lines]);
+
   return(
     <div style={{width:420,borderRight:"1px solid #EBEBEB",display:"flex",flexShrink:0,overflow:"hidden",background:"#FFF"}}>
       <div style={{width:148,borderRight:"1px solid #EBEBEB",display:"flex",flexDirection:"column",flexShrink:0}}>
@@ -1081,26 +1141,54 @@ function CastPanel({cast,onUpdate,onAdd,onDelete,onClose}){
           <p style={{margin:0,fontSize:10,fontWeight:800,color:"#000",letterSpacing:"0.1em",textTransform:"uppercase"}}>Cast</p>
           <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",color:"#CCC",fontSize:16,lineHeight:1,padding:0}}>×</button>
         </div>
-        <div style={{flex:1,overflowY:"auto"}}>
-          {cast.length===0&&<p style={{padding:"14px",fontSize:12,color:"#CCC",fontStyle:"italic"}}>No cast yet</p>}
-          {cast.map((c,i)=>(
-            <button key={c.id} onClick={()=>setSel(i)} style={{width:"100%",padding:"10px 14px",background:i===sel?"#FAFAFA":"none",border:"none",borderLeft:`2px solid ${i===sel?"#000":"transparent"}`,cursor:"pointer",textAlign:"left",fontFamily:"inherit",display:"flex",alignItems:"center",gap:8}}>
-              <div style={{width:28,height:28,borderRadius:"50%",flexShrink:0,background:c.image?"none":"#EBEBEB",border:"1px solid #E0E0E0",overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                {c.image?<img src={c.image} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{fontSize:10,fontWeight:700,color:"#AAA"}}>{c.name?.[0]?.toUpperCase()||"?"}</span>}
-              </div>
-              <div style={{overflow:"hidden",flex:1}}>
-                <p style={{margin:0,fontSize:12,fontWeight:i===sel?700:500,color:i===sel?"#000":"#666",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.name}</p>
-                <p style={{margin:"2px 0 0",fontSize:10,color:"#AAA"}}>{c.role}</p>
-              </div>
-            </button>
+        <div style={{padding:"8px 10px",borderBottom:"1px solid #EBEBEB"}}>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search characters..." style={{width:"100%",padding:"5px 8px",border:"1px solid #E0E0E0",borderRadius:4,fontSize:11,outline:"none",fontFamily:"inherit"}}/>
+        </div>
+        <div style={{display:"flex",borderBottom:"1px solid #EBEBEB"}}>
+          {["profile","dialogue"].map(m=>(
+            <button key={m} onClick={()=>setMode(m)} style={{flex:1,padding:"7px 0",background:mode===m?"#FAFAFA":"none",border:"none",borderBottom:`2px solid ${mode===m?"#000":"transparent"}`,cursor:"pointer",fontFamily:"inherit",fontSize:10,fontWeight:700,color:mode===m?"#000":"#AAA",textTransform:"uppercase",letterSpacing:"0.06em"}}>{m}</button>
           ))}
+        </div>
+        <div style={{flex:1,overflowY:"auto"}}>
+          {filtered.length===0&&<p style={{padding:"14px",fontSize:12,color:"#CCC",fontStyle:"italic"}}>{cast.length===0?"No cast yet":"No matches"}</p>}
+          {filtered.map((c)=>{
+            const i=cast.indexOf(c);
+            return(
+            <div key={c.id} style={{display:"flex",alignItems:"center",background:i===sel&&mode==="profile"?"#FAFAFA":"none",borderLeft:`2px solid ${i===sel&&mode==="profile"?"#000":"transparent"}`}}>
+              {mode==="dialogue"&&<input type="checkbox" checked={checked.has(c.id)} onChange={()=>toggleChecked(c.id)} style={{marginLeft:12,cursor:"pointer"}}/>}
+              <button onClick={()=>setSel(i)} style={{flex:1,padding:"10px 14px",background:"none",border:"none",cursor:"pointer",textAlign:"left",fontFamily:"inherit",display:"flex",alignItems:"center",gap:8,minWidth:0}}>
+                <div style={{width:28,height:28,borderRadius:"50%",flexShrink:0,background:c.image?"none":"#EBEBEB",border:"1px solid #E0E0E0",overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  {c.image?<img src={c.image} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{fontSize:10,fontWeight:700,color:"#AAA"}}>{c.name?.[0]?.toUpperCase()||"?"}</span>}
+                </div>
+                <div style={{overflow:"hidden",flex:1}}>
+                  <p style={{margin:0,fontSize:12,fontWeight:i===sel?700:500,color:i===sel?"#000":"#666",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.name}</p>
+                  <p style={{margin:"2px 0 0",fontSize:10,color:"#AAA"}}>{c.role}</p>
+                </div>
+              </button>
+            </div>
+          );})}
         </div>
         <div style={{padding:"10px 12px 42px",borderTop:"1px solid #EBEBEB",display:"flex",gap:6}}>
           <button onClick={()=>onAdd((newIdx)=>setSel(newIdx))} style={{flex:1,padding:"7px",background:"#000",color:"#FFF",border:"none",borderRadius:4,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700}}>+ Add</button>
           <button onClick={()=>{if(cast.length===0)return;onDelete(cast[sel].id);setSel(Math.max(0,sel-1));}} style={{padding:"7px 10px",background:"none",border:"1px solid #E0E0E0",borderRadius:4,cursor:"pointer",fontFamily:"inherit",fontSize:11,color:"#AAA"}}>✕</button>
         </div>
       </div>
-      {cur?(
+      {mode==="dialogue"?(
+        <div style={{flex:1,overflowY:"auto",padding:"16px 18px 52px"}}>
+          <p style={{...css.label,marginBottom:12}}>{checked.size>1?`${checked.size} characters selected`:cur?.name||"Select a character"} — {dialogueReport.length} line{dialogueReport.length===1?"":"s"}</p>
+          {dialogueReport.length===0&&<p style={{color:"#CCC",fontSize:12}}>No dialogue found for this selection yet.</p>}
+          {dialogueReport.map((r,i)=>(
+            <div key={i} onClick={()=>onJumpTo&&onJumpTo(r.idx)} style={{padding:"10px 0",borderBottom:"1px solid #F0F0F0",cursor:onJumpTo?"pointer":"default"}}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                <span style={{fontSize:11,fontWeight:800,color:"#000",letterSpacing:"0.04em"}}>{r.character}</span>
+                <span style={{fontSize:10,color:"#BBB"}}>p.{r.page}</span>
+              </div>
+              <p style={{margin:"0 0 4px",fontSize:12,color:"#333",lineHeight:1.5}}>{r.text||"(no dialogue text)"}</p>
+              <span style={{fontSize:9,color:"#CCC",textTransform:"uppercase",letterSpacing:"0.04em"}}>{r.scene}</span>
+            </div>
+          ))}
+        </div>
+      ):cur?(
         <div style={{flex:1,overflowY:"auto",padding:"20px 18px 52px",display:"flex",flexDirection:"column"}}>
           <div style={{display:"flex",alignItems:"flex-end",gap:14,marginBottom:18}}>
             <div style={{width:72,height:72,borderRadius:8,flexShrink:0,background:cur.image?"none":"#F4F4F4",border:"1px solid #E8E8E8",overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center"}}>
@@ -1953,7 +2041,7 @@ function SceneNavigator({lines,onJumpTo,collapsed,onToggle}){
   const cycleStatus=(idx,e)=>{e.stopPropagation();const keys=Object.keys(SCENE_STATUS);const cur=statuses[idx]||"todo";const next=keys[(keys.indexOf(cur)+1)%keys.length];setStatuses(s=>({...s,[idx]:next}));};
   if(collapsed) return null;
   return(
-    <div style={{width:220,minWidth:220,borderRight:"1px solid #EBEBEB",background:"#FAFAFA",display:"flex",flexDirection:"column",flexShrink:0,overflow:"hidden"}}>
+    <div style={{width:220,minWidth:220,borderLeft:"1px solid #EBEBEB",background:"#FAFAFA",display:"flex",flexDirection:"column",flexShrink:0,overflow:"hidden"}}>
       <div style={{padding:"12px 12px 10px",borderBottom:"1px solid #EBEBEB",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
         <span style={{fontSize:9,fontWeight:800,color:"#AAA",letterSpacing:"0.14em",textTransform:"uppercase"}}>Scenes</span>
         <button onClick={onToggle} style={{background:"none",border:"none",cursor:"pointer",color:"#BBB",fontSize:13,padding:2}}>×</button>
@@ -2147,6 +2235,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
     saveToastTimerRef.current=setTimeout(()=>setSaveToast(false),2000);
   };
   const [projectMenuOpen,setProjectMenuOpen]=useState(false);
+  const [projectSearch,setProjectSearch]=useState("");
   const [darkCanvas,setDarkCanvas]=useState(false);
   const [galleryOpen,setGalleryOpen]=useState(false);
   const [charPanelOpen,setCharPanelOpen]=useState(false);
@@ -2303,13 +2392,11 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
         </div>
       </div>
 
-      {nav==="write"&&<SceneNavigator lines={active?.lines||[]} onJumpTo={jumpToLine} collapsed={sceneNavCollapsed} onToggle={()=>setSceneNavCollapsed(o=>!o)}/>}
-
       {castOpen&&(
-        <CastPanel cast={cast} onUpdate={updateCharacter}
+        <CastPanel cast={cast} lines={active?.lines} onUpdate={updateCharacter}
           onAdd={(onAdded)=>{const c={id:Date.now(),name:"NEW CHARACTER",role:"Supporting",voice:"",notes:""};addCharacter(c);if(onAdded)onAdded(cast.length);}}
           onDelete={(charId)=>{if(!active)return;updateProject(active.id,{cast:active.cast.filter(c=>c.id!==charId)});}}
-          onClose={()=>setCastOpen(false)}/>
+          onClose={()=>setCastOpen(false)} onJumpTo={jumpToLine}/>
       )}
 
       <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
@@ -2319,11 +2406,15 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
               <div style={{flex:1,minWidth:0,position:"relative",display:"flex",alignItems:"center",gap:6}}>
                 <input value={active.title} onChange={e=>updateProject(active.id,{title:e.target.value})}
                   style={{background:"none",border:"none",color:"#000",fontSize:14,fontWeight:700,outline:"none",fontFamily:"inherit",flex:1,minWidth:0}}/>
-                {projects.length>1&&<button onClick={()=>setProjectMenuOpen(o=>!o)} style={{background:"none",border:"none",cursor:"pointer",color:"#CCC",fontSize:10,padding:"2px 4px",flexShrink:0}}>▾</button>}
+                {projects.length>1&&<button onClick={()=>{setProjectMenuOpen(o=>!o);setProjectSearch("");}} style={{background:"none",border:"none",cursor:"pointer",color:"#CCC",fontSize:10,padding:"2px 4px",flexShrink:0}}>▾</button>}
                 {projectMenuOpen&&(
-                  <div style={{position:"absolute",top:"100%",left:0,background:"#FFF",border:"1px solid #E0E0E0",borderRadius:6,boxShadow:"0 4px 16px rgba(0,0,0,0.1)",zIndex:600,minWidth:220,maxHeight:280,overflowY:"auto"}}>
-                    {projects.map(p=>(<button key={p.id} onClick={()=>{setActiveId(p.id);setProjectMenuOpen(false);}} style={{display:"block",width:"100%",padding:"9px 14px",background:p.id===active.id?"#FAFAFA":"none",border:"none",borderBottom:"1px solid #F5F5F5",cursor:"pointer",textAlign:"left",fontFamily:"inherit",fontSize:12,fontWeight:p.id===active.id?700:400,color:p.id===active.id?"#000":"#555"}}>{p.title||"Untitled"}<span style={{float:"right",fontSize:10,color:"#CCC",fontWeight:400}}>{FORMATS.find(f=>f.id===p.format)?.label}</span></button>))}
-                    <button onClick={()=>{newProject();setProjectMenuOpen(false);}} style={{display:"block",width:"100%",padding:"9px 14px",background:"none",border:"none",borderTop:"1px solid #EBEBEB",cursor:"pointer",textAlign:"left",fontFamily:"inherit",fontSize:12,color:"#888"}}>+ New project</button>
+                  <div style={{position:"absolute",top:"100%",left:0,background:"#FFF",border:"1px solid #E0E0E0",borderRadius:6,boxShadow:"0 4px 16px rgba(0,0,0,0.1)",zIndex:600,minWidth:240,maxHeight:340,display:"flex",flexDirection:"column"}}>
+                    <input autoFocus value={projectSearch} onChange={e=>setProjectSearch(e.target.value)} placeholder="Search projects..." style={{padding:"8px 12px",border:"none",borderBottom:"1px solid #EBEBEB",fontSize:12,outline:"none",fontFamily:"inherit",flexShrink:0}}/>
+                    <div style={{overflowY:"auto",maxHeight:280}}>
+                      {projects.filter(p=>(p.title||"Untitled").toLowerCase().includes(projectSearch.toLowerCase())).sort((a,b)=>(b.updated||b.created||0)-(a.updated||a.created||0)).map(p=>(<button key={p.id} onClick={()=>{setActiveId(p.id);setProjectMenuOpen(false);setProjectSearch("");}} style={{display:"block",width:"100%",padding:"9px 14px",background:p.id===active.id?"#FAFAFA":"none",border:"none",borderBottom:"1px solid #F5F5F5",cursor:"pointer",textAlign:"left",fontFamily:"inherit",fontSize:12,fontWeight:p.id===active.id?700:400,color:p.id===active.id?"#000":"#555"}}>{p.title||"Untitled"}<span style={{float:"right",fontSize:10,color:"#CCC",fontWeight:400}}>{FORMATS.find(f=>f.id===p.format)?.label}</span></button>))}
+                      {projects.filter(p=>(p.title||"Untitled").toLowerCase().includes(projectSearch.toLowerCase())).length===0&&<p style={{padding:"14px",margin:0,fontSize:11,color:"#CCC",textAlign:"center"}}>No matches</p>}
+                    </div>
+                    <button onClick={()=>{newProject();setProjectMenuOpen(false);setProjectSearch("");}} style={{display:"block",width:"100%",padding:"9px 14px",background:"none",border:"none",borderTop:"1px solid #EBEBEB",cursor:"pointer",textAlign:"left",fontFamily:"inherit",fontSize:12,color:"#888",flexShrink:0}}>+ New project</button>
                   </div>
                 )}
               </div>
@@ -2361,6 +2452,8 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
               {notesOpen&&active&&<NotesPanel notes={active?.notes||""} onChange={updateNotes} onClose={()=>setNotesOpen(false)}/>}
             </div>
           )}
+
+          {nav==="write"&&<SceneNavigator lines={active?.lines||[]} onJumpTo={jumpToLine} collapsed={sceneNavCollapsed} onToggle={()=>setSceneNavCollapsed(o=>!o)}/>}
 
           {nav==="beats"&&(active?<BeatBoard project={active} onUpdate={updateBeats}/>:<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center"}}><p style={{color:"#CCC",fontSize:13}}>Open a project first.</p></div>)}
           {nav==="mood"&&(active?<MoodBoard project={active} onUpdateCards={updateMoodCards}/>:<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center"}}><p style={{color:"#CCC",fontSize:13}}>Open a project first.</p></div>)}
