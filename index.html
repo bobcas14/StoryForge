@@ -411,7 +411,7 @@ function LineVoiceControl({audio,onRecorded}){
   );
 }
 
-function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageChange,focusMode,scrollRef,darkCanvas,onCharFocus,profile,onEditTitlePage,onForceSave,flushRef}){
+function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageChange,focusMode,scrollRef,darkCanvas,onCharFocus,profile,onEditTitlePage,onForceSave,flushRef,undoRedoRef}){
   const [lines,setLines]=useState(()=>
     project?.lines?.length?project.lines:[{id:Date.now(),text:"",mode:"action"}]
   );
@@ -461,6 +461,7 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
   const history=useRef([]);
   const historyFuture=useRef([]);
   const MAX_HISTORY=100;
+  const lastSnapshotTimeRef=useRef(Date.now());
 
   const captureSnapshot=(lns,cache)=>{
     history.current.push({lines:lns.map(l=>({...l})),texts:{...cache}});
@@ -480,6 +481,31 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
     onUpdateContent(snapshot.lines.map((l,i)=>({...l,text:snapshot.texts[i]??l.text})));
   };
 
+  const doUndo=()=>{
+    if(history.current.length<=1) return;
+    const currentSnap={
+      lines:lines.map((l,i)=>({...l,text:textCache.current[i]??l.text})),
+      texts:{...textCache.current},
+    };
+    historyFuture.current.push(currentSnap);
+    history.current.pop();
+    const prev=history.current[history.current.length-1];
+    if(prev) applySnapshot(prev);
+  };
+  const doRedo=()=>{
+    if(historyFuture.current.length===0) return;
+    const next=historyFuture.current.pop();
+    history.current.push(next);
+    applySnapshot(next);
+  };
+  // Expose undo/redo to App so the footer buttons can trigger them —
+  // history itself lives entirely in here, same pattern as flushRef.
+  useEffect(()=>{
+    if(!undoRedoRef) return;
+    undoRedoRef.current={undo:doUndo,redo:doRedo};
+    return()=>{if(undoRedoRef) undoRedoRef.current=null;};
+  });
+
   // ── PAGE COUNTER ──────────────────────────────────────────────────────────
   const updateCounter=(lineIdx)=>{
     const p=pageMapRef.current.lineToPage[lineIdx]||1;
@@ -498,6 +524,7 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
     pageMapRef.current=computePageMap(next);
     history.current=[{lines:next.map(l=>({...l})),texts:Object.fromEntries(next.map((l,i)=>[i,l.text]))}];
     historyFuture.current=[];
+    lastSnapshotTimeRef.current=Date.now();
   },[project?.id]);
 
   // ── SCROLL-TO-LINE ────────────────────────────────────────────────────────
@@ -560,6 +587,7 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
       setLines(prev=>{
         const updated=prev.map((l,i)=>({...l,text:textCache.current[i]??l.text}));
         captureSnapshot(updated,{...textCache.current});
+        lastSnapshotTimeRef.current=Date.now();
         onUpdateContent(updated);
         pageMapRef.current=computePageMap(updated);
         return updated;
@@ -581,6 +609,7 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
       clearTimeout(syncTimerRef.current);
       const updated=lines.map((l,i)=>({...l,text:textCache.current[i]??l.text}));
       captureSnapshot(updated,{...textCache.current});
+      lastSnapshotTimeRef.current=Date.now();
       onUpdateContent(updated);
       if(onForceSave) onForceSave(updated);
       pageMapRef.current=computePageMap(updated);
@@ -624,6 +653,18 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
   const handleChange=(e,idx)=>{
     const text=e.target.value;
     textCache.current[idx]=text;
+    // Bug fix: a snapshot used to only get captured once, 300ms after you
+    // stopped typing — so one long continuous typing burst with no pauses
+    // was a single undo step no matter how much you'd typed, and Ctrl+Z
+    // would immediately run out. This adds a checkpoint every ~1.5s of
+    // active typing too, so a long burst breaks into several real undo
+    // steps instead of one big one.
+    const now=Date.now();
+    if(now-lastSnapshotTimeRef.current>1500){
+      const updated=lines.map((l,i)=>({...l,text:textCache.current[i]??l.text}));
+      captureSnapshot(updated,{...textCache.current});
+      lastSnapshotTimeRef.current=now;
+    }
     scheduleSync();
     const mode=lines[idx]?.mode;
     if(mode==="character"&&text.trim().length>0){
@@ -688,25 +729,14 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
     if((e.ctrlKey||e.metaKey)&&!e.shiftKey&&e.key==="z"){
       e.preventDefault();
       textCache.current[idx]=refs.current[idx]?.value??textCache.current[idx]??"";
-      if(history.current.length<=1) return;
-      const currentSnap={
-        lines:lines.map((l,i)=>({...l,text:textCache.current[i]??l.text})),
-        texts:{...textCache.current},
-      };
-      historyFuture.current.push(currentSnap);
-      history.current.pop();
-      const prev=history.current[history.current.length-1];
-      if(prev) applySnapshot(prev);
+      doUndo();
       return;
     }
 
     // ── ⌘Y / ⌘⇧Z: redo ───────────────────────────────────────────────────
     if((e.ctrlKey||e.metaKey)&&(e.key==="y"||(e.shiftKey&&e.key==="z"))){
       e.preventDefault();
-      if(historyFuture.current.length===0) return;
-      const next=historyFuture.current.pop();
-      history.current.push(next);
-      applySnapshot(next);
+      doRedo();
       return;
     }
 
@@ -2678,6 +2708,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
 
   // ── MANUAL / EMERGENCY SAVE ────────────────────────────────────────────────
   const flushRef=useRef(null);
+  const undoRedoRef=useRef(null);
   // Bypasses React state entirely — writes straight to localStorage via the
   // same onSaveProject Root already uses, so it still works even if this
   // runs during a 'beforeunload' teardown where scheduled state updates
@@ -2707,7 +2738,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
             </div>
           </div>
           <div style={{flex:1,overflow:"hidden"}}>
-            {active&&<SmartEditor project={active} cast={cast} onUpdateContent={updateLines} onAddCharacter={addCharacter} format={active.format} onPageChange={(cur,total)=>setPageInfo({cur,total})} focusMode={true} scrollRef={sceneNavRef} profile={profile} onEditTitlePage={()=>setTitlePageEditorOpen(true)} onForceSave={forceSaveNow} flushRef={flushRef}/>}
+            {active&&<SmartEditor project={active} cast={cast} onUpdateContent={updateLines} onAddCharacter={addCharacter} format={active.format} onPageChange={(cur,total)=>setPageInfo({cur,total})} focusMode={true} scrollRef={sceneNavRef} profile={profile} onEditTitlePage={()=>setTitlePageEditorOpen(true)} onForceSave={forceSaveNow} flushRef={flushRef} undoRedoRef={undoRedoRef}/>}
           </div>
         </div>
       )}
@@ -2867,7 +2898,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
           {nav==="write"&&(
             active?(
               <div style={{display:((beatsOpen&&beatsExpanded)||(moodOpen&&moodExpanded))?"none":"flex",flex:1,minWidth:0}}>
-                <SmartEditor project={active} cast={cast} onUpdateContent={updateLines} onAddCharacter={addCharacter} format={active.format} onPageChange={(cur,total)=>setPageInfo({cur,total})} focusMode={focusMode} scrollRef={sceneNavRef} darkCanvas={darkCanvas} onCharFocus={setCurrentCharName} key={active?.id} profile={profile} onEditTitlePage={()=>setTitlePageEditorOpen(true)} onForceSave={forceSaveNow} flushRef={flushRef}/>
+                <SmartEditor project={active} cast={cast} onUpdateContent={updateLines} onAddCharacter={addCharacter} format={active.format} onPageChange={(cur,total)=>setPageInfo({cur,total})} focusMode={focusMode} scrollRef={sceneNavRef} darkCanvas={darkCanvas} onCharFocus={setCurrentCharName} key={active?.id} profile={profile} onEditTitlePage={()=>setTitlePageEditorOpen(true)} onForceSave={forceSaveNow} flushRef={flushRef} undoRedoRef={undoRedoRef}/>
               </div>
             ):(
               <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16}}>
@@ -2962,6 +2993,9 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
               <span style={{fontSize:10,color:"#AAA"}}>{lastSaved?`Saved ${fmtLastSaved()}`:"Auto-saves as you type"}</span>
               <span style={{margin:"0 10px",color:"#DDD"}}>|</span>
               <button onClick={manualSave} title="Ctrl/Cmd+S" style={{background:"none",border:"1px solid #E0E0E0",borderRadius:3,padding:"2px 8px",fontSize:10,cursor:"pointer",color:"#888",fontFamily:"inherit"}}>Save</button>
+              <span style={{margin:"0 10px",color:"#DDD"}}>|</span>
+              <button onClick={()=>undoRedoRef.current?.undo()} title="Undo (Ctrl/Cmd+Z)" style={{background:"none",border:"1px solid #E0E0E0",borderRadius:3,padding:"2px 8px",fontSize:10,cursor:"pointer",color:"#888",fontFamily:"inherit"}}>↶ Undo</button>
+              <button onClick={()=>undoRedoRef.current?.redo()} title="Redo (Ctrl/Cmd+Shift+Z)" style={{background:"none",border:"1px solid #E0E0E0",borderRadius:3,padding:"2px 8px",fontSize:10,cursor:"pointer",color:"#888",fontFamily:"inherit",marginLeft:6}}>↷ Redo</button>
             </>
           ):(
             <span style={{fontSize:10,color:"#CCC",fontStyle:"italic"}}>Tab · Enter · Esc · ⌘K</span>
