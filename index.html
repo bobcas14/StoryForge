@@ -493,7 +493,7 @@ function TitlePageEditor({project,profile,onSave,onClose}){
 // (MediaRecorder) — no external service or library needed. Only shown for
 // the Voice Over / Audiobook formats. Stored as a data URL on the line
 // itself, same pattern already used for character photo uploads.
-function LineVoiceControl({audio,onRecorded,onDelete}){
+function LineVoiceControl({audio,onRecorded,onDelete,dark}){
   const [recording,setRecording]=useState(false);
   const mediaRef=useRef(null);
   const chunksRef=useRef([]);
@@ -535,15 +535,21 @@ function LineVoiceControl({audio,onRecorded,onDelete}){
       new Audio(audio).play(); // legacy inline data: URL from before this change
     }
   };
+  // Bug fix: these used thin, very light-gray borders/fills that assumed a
+  // white page — on a dark-mode page they were nearly invisible. Bigger
+  // hit targets too; the old ones were hard to see and hard to click.
+  const recColor=dark?"#F0F0F0":"#000";
+  const idleColor=dark?"#999":"#CCC";
+  const iconColor=dark?"#DDD":"#888";
   return(
-    <span style={{display:"inline-flex",alignItems:"center",gap:5}} onMouseDown={e=>e.stopPropagation()}>
+    <span style={{display:"inline-flex",alignItems:"center",gap:8}} onMouseDown={e=>e.stopPropagation()}>
       {recording?(
-        <button onClick={stop} title="Stop recording" style={{background:"#000",border:"none",borderRadius:"50%",width:15,height:15,cursor:"pointer",color:"#FFF",fontSize:7,padding:0,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>■</button>
+        <button onClick={stop} title="Stop recording" style={{background:dark?"#F0F0F0":"#000",border:"none",borderRadius:"50%",width:20,height:20,cursor:"pointer",color:dark?"#000":"#FFF",fontSize:9,padding:0,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>■</button>
       ):(
-        <button onClick={start} title={audio?"Re-record take":"Record voice-over take"} style={{background:"none",border:`1px solid ${audio?"#000":"#DDD"}`,borderRadius:"50%",width:15,height:15,cursor:"pointer",color:audio?"#000":"#CCC",fontSize:7,padding:0,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>●</button>
+        <button onClick={start} title={audio?"Re-record take":"Record voice-over take"} style={{background:"none",border:`2px solid ${audio?recColor:idleColor}`,borderRadius:"50%",width:20,height:20,cursor:"pointer",color:audio?recColor:idleColor,fontSize:11,fontWeight:900,padding:0,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>●</button>
       )}
-      {audio&&!recording&&<button onClick={play} title="Play take" style={{background:"none",border:"none",cursor:"pointer",color:"#888",fontSize:9,padding:0,flexShrink:0}}>▶</button>}
-      {audio&&!recording&&<button onClick={()=>{if(confirm("Delete this voice-over take?"))onDelete&&onDelete();}} title="Delete take" style={{background:"none",border:"none",cursor:"pointer",color:"#CCC",fontSize:10,padding:0,flexShrink:0,lineHeight:1}}>✕</button>}
+      {audio&&!recording&&<button onClick={play} title="Play take" style={{background:"none",border:"none",cursor:"pointer",color:iconColor,fontSize:14,fontWeight:900,padding:0,flexShrink:0}}>▶</button>}
+      {audio&&!recording&&<button onClick={()=>{if(confirm("Delete this voice-over take?"))onDelete&&onDelete();}} title="Delete take" style={{background:"none",border:"none",cursor:"pointer",color:iconColor,fontSize:15,fontWeight:900,padding:0,flexShrink:0,lineHeight:1}}>✕</button>}
     </span>
   );
 }
@@ -1171,6 +1177,9 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
       return prev.map((l,i)=>i===idx?{...l,audio:null}:l);
     });
   };
+  const addVoiceToLine=(idx)=>{
+    setLines(prev=>prev.map((l,i)=>i===idx?{...l,hasVoice:true}:l));
+  };
 
   const placeholder=(mode)=>"...";
 
@@ -1223,16 +1232,28 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
             return(
               <div key={line.id}>
                 {isBreakBefore&&<PageBreakDivider pageNum={pageNum} title={project?.title} format={format} dark={darkCanvas}/>}
-                <div style={{position:"relative"}}>
+                <div className="sf-line-outer" style={{position:"relative"}}>
                   {line.notes?.length>0&&(
                     <span style={{position:"absolute",left:-20,top:4,fontSize:9,color:"#AAA",
                       fontWeight:700,cursor:"default",userSelect:"none"}}
                       title={line.notes.map(n=>n.text).join(" / ")}>¹</span>
                   )}
-                  {isVoiceFormat&&line.text?.trim()&&(
-                    <div style={{position:"absolute",right:-56,top:6,zIndex:50}}>
-                      <LineVoiceControl audio={line.audio} onRecorded={dataUrl=>saveLineAudio(idx,dataUrl)} onDelete={()=>deleteLineAudio(idx)}/>
+                  {/* Voice recording is opt-in per line now, not shown on every
+                      line automatically — a subtle "+ Voice" button appears
+                      only on hover; clicking it turns on the real record/play/
+                      delete control for that specific line, which then stays
+                      on. Lines that already have a take always show the real
+                      control regardless of hover. */}
+                  {isVoiceFormat&&line.text?.trim()&&(line.hasVoice||line.audio)&&(
+                    <div style={{position:"absolute",right:-64,top:4,zIndex:50}}>
+                      <LineVoiceControl audio={line.audio} dark={darkCanvas} onRecorded={dataUrl=>saveLineAudio(idx,dataUrl)} onDelete={()=>deleteLineAudio(idx)}/>
                     </div>
+                  )}
+                  {isVoiceFormat&&line.text?.trim()&&!(line.hasVoice||line.audio)&&(
+                    <button className="sf-voice-add-btn" onClick={()=>addVoiceToLine(idx)} title="Add a voice-over recording to this line"
+                      style={{position:"absolute",right:-70,top:4,zIndex:50,background:"none",cursor:"pointer",fontFamily:"inherit",
+                        border:`1px solid ${darkCanvas?"#777":"#BBB"}`,borderRadius:4,padding:"2px 6px",fontSize:10,fontWeight:700,
+                        color:darkCanvas?"#CCC":"#888"}}>+ Voice</button>
                   )}
                   {line.mode==="character"&&(()=>{
                     const charName=(textCache.current[idx]||line.text||"").trim().toUpperCase();
@@ -1343,6 +1364,8 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
         textarea{scrollbar-width:none;}
         textarea::-webkit-scrollbar{display:none;}
         @keyframes sf-progress{0%{width:5%;margin-left:0;}50%{width:60%;margin-left:20%;}100%{width:5%;margin-left:95%;}}
+        .sf-voice-add-btn{opacity:0;transition:opacity 0.12s ease;}
+        .sf-line-outer:hover .sf-voice-add-btn{opacity:1;}
       `}</style>
     </div>
   );
