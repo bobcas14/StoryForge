@@ -12,10 +12,17 @@
     html, body, #root { margin: 0; padding: 0; height: 100%; }
     body { font-family: -apple-system, 'Segoe UI', sans-serif; }
     select { appearance: auto; }
+    #print-area { position: absolute; left: -9999px; top: 0; width: 8.5in; }
+    @media print {
+      body * { visibility: hidden; }
+      #print-area, #print-area * { visibility: visible; }
+      #print-area { position: absolute; left: 0; top: 0; width: 100%; }
+    }
   </style>
 </head>
 <body>
   <div id="root"></div>
+  <div id="print-area"></div>
   <script type="text/babel" data-presets="react">
     const { useState, useEffect, useRef, useMemo, useCallback } = React;
 
@@ -288,7 +295,6 @@ function TitlePage({project,profile,onEdit,format}){
           </div>
           {!isNovel&&<div style={{fontSize:11,color:"#888",textAlign:"right",lineHeight:1.8}}>
             <p style={{margin:0}}>© {new Date().getFullYear()}</p>
-            {author&&<p style={{margin:0}}>{author}</p>}
           </div>}
         </div>
       </div>
@@ -344,6 +350,47 @@ function TitlePageEditor({project,profile,onSave,onClose}){
 }
 
 // ─── SMART EDITOR ─────────────────────────────────────────────────────────────
+// ── VOICE-OVER RECORDING ─────────────────────────────────────────────────────
+// Records a take for a single line using the browser's built-in mic capture
+// (MediaRecorder) — no external service or library needed. Only shown for
+// the Voice Over / Audiobook formats. Stored as a data URL on the line
+// itself, same pattern already used for character photo uploads.
+function LineVoiceControl({audio,onRecorded}){
+  const [recording,setRecording]=useState(false);
+  const mediaRef=useRef(null);
+  const chunksRef=useRef([]);
+  const start=async()=>{
+    try{
+      const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+      const rec=new MediaRecorder(stream);
+      chunksRef.current=[];
+      rec.ondataavailable=e=>{if(e.data.size>0)chunksRef.current.push(e.data);};
+      rec.onstop=()=>{
+        const blob=new Blob(chunksRef.current,{type:rec.mimeType||"audio/webm"});
+        const reader=new FileReader();
+        reader.onload=()=>onRecorded(reader.result);
+        reader.readAsDataURL(blob);
+        stream.getTracks().forEach(t=>t.stop());
+      };
+      rec.start();mediaRef.current=rec;setRecording(true);
+    }catch(err){
+      alert("Couldn't access your microphone — check this site's mic permission in your browser settings.");
+    }
+  };
+  const stop=()=>{mediaRef.current?.stop();setRecording(false);};
+  const play=()=>{if(audio)new Audio(audio).play();};
+  return(
+    <span style={{display:"inline-flex",alignItems:"center",gap:5}} onMouseDown={e=>e.stopPropagation()}>
+      {recording?(
+        <button onClick={stop} title="Stop recording" style={{background:"#000",border:"none",borderRadius:"50%",width:15,height:15,cursor:"pointer",color:"#FFF",fontSize:7,padding:0,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>■</button>
+      ):(
+        <button onClick={start} title={audio?"Re-record take":"Record voice-over take"} style={{background:"none",border:`1px solid ${audio?"#000":"#DDD"}`,borderRadius:"50%",width:15,height:15,cursor:"pointer",color:audio?"#000":"#CCC",fontSize:7,padding:0,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>●</button>
+      )}
+      {audio&&!recording&&<button onClick={play} title="Play take" style={{background:"none",border:"none",cursor:"pointer",color:"#888",fontSize:9,padding:0,flexShrink:0}}>▶</button>}
+    </span>
+  );
+}
+
 function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageChange,focusMode,scrollRef,darkCanvas,onCharFocus,profile,onEditTitlePage,onForceSave,flushRef}){
   const [lines,setLines]=useState(()=>
     project?.lines?.length?project.lines:[{id:Date.now(),text:"",mode:"action"}]
@@ -834,6 +881,11 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
     setInlineNote(null);
   };
 
+  const isVoiceFormat=format==="voiceover"||format==="audiobook";
+  const saveLineAudio=(idx,dataUrl)=>{
+    setLines(prev=>prev.map((l,i)=>i===idx?{...l,audio:dataUrl}:l));
+  };
+
   const placeholder=(mode)=>"...";
 
   const taStyle=(mode)=>{
@@ -874,6 +926,11 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
                     <span style={{position:"absolute",left:-20,top:4,fontSize:9,color:"#AAA",
                       fontWeight:700,cursor:"default",userSelect:"none"}}
                       title={line.notes.map(n=>n.text).join(" / ")}>¹</span>
+                  )}
+                  {isVoiceFormat&&line.text?.trim()&&(
+                    <div style={{position:"absolute",right:-56,top:6,zIndex:50}}>
+                      <LineVoiceControl audio={line.audio} onRecorded={dataUrl=>saveLineAudio(idx,dataUrl)}/>
+                    </div>
                   )}
                   {line.mode==="character"&&(()=>{
                     const charName=(textCache.current[idx]||line.text||"").trim().toUpperCase();
@@ -1027,7 +1084,7 @@ function AIPanel({project,cast,onClose,onGoToProfile}){
         </div>
       )}
       <div style={{display:"flex",borderBottom:"1px solid #E8E8E8"}}>
-        {[["write","Write"],["correct","Corrections"],["voice","Voice"]].map(([id,lbl])=>(
+        {[["write","Write"],["correct","Corrections"],["voice","Character Voice"]].map(([id,lbl])=>(
           <button key={id} onClick={()=>setMode(id)} style={{flex:1,padding:"10px 4px",background:"none",border:"none",borderBottom:`2px solid ${mode===id?"#000":"transparent"}`,color:mode===id?"#000":"#AAA",cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase"}}>{lbl}</button>
         ))}
       </div>
@@ -1061,6 +1118,7 @@ function AIPanel({project,cast,onClose,onGoToProfile}){
         {mode==="voice"&&(
           <div>
             <label style={css.label}>Character voice profiles</label>
+            <p style={{margin:"0 0 12px",fontSize:11.5,color:"#AAA",lineHeight:1.6}}>This writes a character's <em>voice</em> — their vocabulary, rhythm, and personality on the page — plus 3 sample dialogue lines in that style. It doesn't record or generate audio; for actual voice-over recording, use the record button (●) next to each line when your project format is Voice Over or Audiobook.</p>
             {cast.length===0?<p style={{fontSize:12,color:"#AAA",fontStyle:"italic"}}>Add characters to your cast first.</p>
               :cast.map(c=>(<button key={c.id} onClick={()=>run("You are a voice director. Give a specific voice profile and 3 sample dialogue lines.",`Character: ${c.name}, Role: ${c.role}, Voice: ${c.voice||"not set"}, Genre: ${genre}`)} style={{display:"flex",alignItems:"center",gap:10,width:"100%",padding:"10px 12px",background:"#FAFAFA",border:"1px solid #EBEBEB",borderRadius:4,marginBottom:4,cursor:"pointer",fontFamily:"inherit"}}>
                 <div style={{width:28,height:28,borderRadius:"50%",background:"#000",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:"#FFF"}}>{c.name[0]}</div>
@@ -1267,13 +1325,7 @@ function LandingNavBar({section,goSection,onStart,onSignIn,user}){
         {user?(()=>{
           const initials=(user.name||"?").trim().split(/\s+/).map(w=>w[0]?.toUpperCase()||"").slice(0,2).join("");
           return(
-            <div style={{display:"flex",gap:12,alignItems:"center"}}>
-              <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                <div style={{width:24,height:24,borderRadius:"50%",background:"#000",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:800,color:"#FFF",flexShrink:0}}>{initials}</div>
-                <span style={{fontSize:12,color:"#888"}}>{user.name}</span>
-              </div>
-              <button onClick={onStart} style={{padding:"8px 20px",background:"#000",color:"#FFF",border:"none",borderRadius:4,cursor:"pointer",fontSize:13,fontWeight:700,fontFamily:"inherit"}}>Open App</button>
-            </div>
+            <button onClick={onStart} title="Go to your projects" style={{width:32,height:32,borderRadius:"50%",background:"#000",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:"#FFF",padding:0}}>{initials}</button>
           );
         })():(
           <div style={{display:"flex",gap:8}}>
@@ -1474,6 +1526,7 @@ function Dashboard({user,onOpen,onNew,onSignOut}){
   const [renaming,setRenaming]=useState(null);
   const [renameVal,setRenameVal]=useState("");
   const [confirmDelete,setConfirmDelete]=useState(null);
+  const [search,setSearch]=useState("");
   const save=(ps)=>{setProjects(ps);LS.set(projectsKey,ps);};
   const deleteProject=(id)=>save(projects.filter(p=>p.id!==id));
   const duplicateProject=(p)=>{const copy={...p,id:Date.now(),title:p.title+" (copy)",created:Date.now()};save([copy,...projects]);};
@@ -1490,10 +1543,14 @@ function Dashboard({user,onOpen,onNew,onSignOut}){
         </div>
       </div>
       <div style={{flex:1,padding:"48px",maxWidth:1000,margin:"0 auto",width:"100%",boxSizing:"border-box"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:32}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
           <h2 style={{margin:0,fontSize:26,fontWeight:900,color:"#000"}}>Your Projects</h2>
           <button onClick={()=>onNew(save,projects)} style={{padding:"9px 20px",background:"#000",color:"#FFF",border:"none",borderRadius:4,cursor:"pointer",fontFamily:"inherit",fontWeight:700,fontSize:13}}>+ New Project</button>
         </div>
+        {projects.length>1&&(
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search your projects..."
+            style={{width:"100%",padding:"9px 14px",border:"1px solid #E0E0E0",borderRadius:6,fontSize:13,outline:"none",fontFamily:"inherit",marginBottom:20,boxSizing:"border-box"}}/>
+        )}
         {projects.length===0?(
           <div style={{textAlign:"center",padding:"80px 0",color:"#CCC"}}>
             <p style={{fontSize:14,margin:"0 0 20px"}}>No projects yet.</p>
@@ -1501,7 +1558,7 @@ function Dashboard({user,onOpen,onNew,onSignOut}){
           </div>
         ):(
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:16}}>
-            {projects.map(p=>(
+            {projects.filter(p=>(p.title||"").toLowerCase().includes(search.toLowerCase())).map(p=>(
               <div key={p.id} style={{border:"1px solid #EBEBEB",borderRadius:8,padding:"20px",cursor:"pointer",transition:"border-color 0.12s"}}
                 onMouseEnter={e=>e.currentTarget.style.borderColor="#000"}
                 onMouseLeave={e=>e.currentTarget.style.borderColor="#EBEBEB"}
@@ -1727,6 +1784,100 @@ function classifyScriptText(rawText,format){
   }
   flush();
   return blocks;
+}
+
+// ── EXPORT ──────────────────────────────────────────────────────────────────
+// Notes (mode "note") are private per the app's own convention elsewhere
+// ("// private note — not in final script") so every export format skips them.
+function escapeHtml(s){return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+
+function downloadText(filename,content){
+  const blob=new Blob([content],{type:"text/plain;charset=utf-8"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url;a.download=filename;document.body.appendChild(a);a.click();
+  document.body.removeChild(a);URL.revokeObjectURL(url);
+}
+
+function buildPlainText(project){
+  const title=(project.title||"Untitled").toUpperCase();
+  const author=project.writtenBy||"";
+  let out=`${title}\n${author?`Written by ${author}\n`:""}\n\n`;
+  (project.lines||[]).forEach(l=>{
+    const text=(l.text||"").trim();
+    if(!text||l.mode==="note") return;
+    if(l.mode==="location") out+=`\n${text.toUpperCase()}\n\n`;
+    else if(l.mode==="character") out+=`\n${" ".repeat(20)}${text.toUpperCase()}\n`;
+    else if(l.mode==="dialogue") out+=`${" ".repeat(10)}${text}\n`;
+    else if(l.mode==="direction") out+=`${" ".repeat(14)}(${text.replace(/^\(|\)$/g,"")})\n`;
+    else out+=`${text}\n\n`;
+  });
+  return out;
+}
+
+function buildFountain(project){
+  const title=project.title||"Untitled";
+  const author=project.writtenBy||"";
+  let out=`Title: ${title}\n${author?`Credit: Written by\nAuthor: ${author}\n`:""}\n\n`;
+  (project.lines||[]).forEach(l=>{
+    const text=(l.text||"").trim();
+    if(!text||l.mode==="note") return;
+    if(l.mode==="location"||l.mode==="character") out+=`\n${text.toUpperCase()}\n`;
+    else if(l.mode==="dialogue") out+=`${text}\n`;
+    else if(l.mode==="direction") out+=`${text.startsWith("(")?text:`(${text})`}\n`;
+    else out+=`\n${text}\n`;
+  });
+  return out;
+}
+
+function buildPrintHtml(project){
+  const title=escapeHtml(project.title||"Untitled");
+  const author=escapeHtml(project.writtenBy||"");
+  let html=`<div style="font-family:'Courier New',Courier,monospace;font-size:12pt;text-align:center;margin-top:3in;">
+    <p style="margin:0 0 24pt;">${title.toUpperCase()}</p>
+    ${author?`<p style="margin:0;">Written by</p><p style="margin:0;">${author}</p>`:""}
+  </div><div style="page-break-after:always;"></div>
+  <div style="font-family:'Courier New',Courier,monospace;font-size:12pt;line-height:1.4;">`;
+  (project.lines||[]).forEach(l=>{
+    const text=escapeHtml((l.text||"").trim());
+    if(!text||l.mode==="note") return;
+    if(l.mode==="location") html+=`<p style="margin:12pt 0 0;font-weight:bold;">${text.toUpperCase()}</p>`;
+    else if(l.mode==="character") html+=`<p style="margin:12pt 0 0 2.2in;">${text.toUpperCase()}</p>`;
+    else if(l.mode==="dialogue") html+=`<p style="margin:0 1.5in 0 1in;">${text}</p>`;
+    else if(l.mode==="direction") html+=`<p style="margin:0 0 0 1.6in;">(${text.replace(/^\(|\)$/g,"")})</p>`;
+    else html+=`<p style="margin:12pt 0 0;">${text}</p>`;
+  });
+  html+="</div>";
+  return html;
+}
+
+function ExportModal({project,onClose}){
+  const safeTitle=(project?.title||"script").replace(/[^a-z0-9\-_ ]/gi,"").trim()||"script";
+  const btnStyle={padding:"10px 14px",background:"#FAFAFA",border:"1px solid #E0E0E0",borderRadius:6,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:600,color:"#333",textAlign:"left"};
+  const doPrint=()=>{
+    // Renders a clean, industry-formatted screenplay into a hidden
+    // print-only container (see #print-area CSS) and hands off to the
+    // browser's native print dialog — "Save as PDF" works from there on
+    // every major browser/OS without needing a PDF-generation library.
+    const el=document.getElementById("print-area");
+    if(el){el.innerHTML=buildPrintHtml(project);window.print();}
+  };
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.3)",zIndex:900,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={onClose}>
+      <div onClick={e=>e.stopPropagation()} style={{background:"#FFF",borderRadius:8,width:360,boxShadow:"0 8px 32px rgba(0,0,0,0.18)",overflow:"hidden"}}>
+        <div style={{padding:"14px 18px",borderBottom:"1px solid #EBEBEB",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span style={{fontSize:12,fontWeight:800,color:"#000",letterSpacing:"0.08em",textTransform:"uppercase"}}>Export</span>
+          <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",color:"#CCC",fontSize:16}}>×</button>
+        </div>
+        <div style={{padding:"16px 18px",display:"flex",flexDirection:"column",gap:8}}>
+          <button onClick={()=>downloadText(`${safeTitle}.txt`,buildPlainText(project))} style={btnStyle}>Plain Text (.txt)</button>
+          <button onClick={()=>downloadText(`${safeTitle}.fountain`,buildFountain(project))} style={btnStyle}>Fountain (.fountain)</button>
+          <button onClick={doPrint} style={btnStyle}>Print / Save as PDF</button>
+          <p style={{margin:"8px 0 0",fontSize:11,color:"#AAA",lineHeight:1.5}}>Word (.docx) and production reports (character/scene breakdowns) are planned for a future update.</p>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function ImportModal({profile,onImport,onClose}){
@@ -2198,7 +2349,7 @@ function SceneGallery({project,onUpdate,currentPage}){
 const NAV_ITEMS=[
   {id:"write",icon:"✍",label:"Write"},{id:"cast",icon:"◉",label:"Cast"},
   {id:"beats",icon:"⊞",label:"Beat Board"},{id:"mood",icon:"◈",label:"Mood Board"},
-  {id:"notes",icon:"≡",label:"Notes"},{id:"profile",icon:"◎",label:"Profile"},
+  {id:"profile",icon:"◎",label:"Profile"},
 ];
 
 function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initialProjects,onSaveProject,onBackToDash,user,onSignOut}){
@@ -2220,6 +2371,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
   const [hoveredNav,setHoveredNav]=useState(null);
   const [pageInfo,setPageInfo]=useState({cur:1,total:1});
   const [importOpen,setImportOpen]=useState(false);
+  const [exportOpen,setExportOpen]=useState(false);
   const [focusMode,setFocusMode]=useState(false);
   const [shortcutsOpen,setShortcutsOpen]=useState(false);
   const [sceneNavCollapsed,setSceneNavCollapsed]=useState(true);
@@ -2341,14 +2493,22 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
           </button>
           {hoveredNav==="home"&&<div style={{position:"absolute",left:44,top:"50%",transform:"translateY(-50%)",background:"#000",color:"#FFF",padding:"4px 10px",borderRadius:4,fontSize:11,fontWeight:700,whiteSpace:"nowrap",pointerEvents:"none",zIndex:700}}>Home</div>}
         </div>
+
+        {/* Dedicated Projects tab — the "SF" logo above is easy to miss as
+            a way back to your other scripts, so this gives switching
+            projects its own clearly-labeled entry point. */}
+        <div style={{position:"relative",width:"100%",display:"flex",justifyContent:"center",marginBottom:8}}
+          onMouseEnter={()=>setHoveredNav("projects")} onMouseLeave={()=>setHoveredNav(null)}>
+          <button onClick={onBackToDash||onHome} style={{width:36,height:36,borderRadius:8,border:"none",background:"transparent",color:"#999",cursor:"pointer",fontSize:15,display:"flex",alignItems:"center",justifyContent:"center"}}>▤</button>
+          {hoveredNav==="projects"&&<div style={{position:"absolute",left:44,top:"50%",transform:"translateY(-50%)",background:"#000",color:"#FFF",padding:"4px 10px",borderRadius:4,fontSize:11,fontWeight:700,whiteSpace:"nowrap",pointerEvents:"none",zIndex:700}}>Projects</div>}
+        </div>
         {NAV_ITEMS.map(item=>{
-          const isActive=item.id==="cast"?castOpen:item.id==="notes"?notesOpen:nav===item.id&&item.id!=="cast"&&item.id!=="notes";
+          const isActive=item.id==="cast"?castOpen:nav===item.id&&item.id!=="cast";
           return(
             <div key={item.id} style={{position:"relative",width:"100%",display:"flex",justifyContent:"center",marginBottom:4}}
               onMouseEnter={()=>setHoveredNav(item.id)} onMouseLeave={()=>setHoveredNav(null)}>
               <button onClick={()=>{
                 if(item.id==="cast"){setCastOpen(o=>!o);}
-                else if(item.id==="notes"){setNotesOpen(o=>!o);}
                 else if(nav===item.id){setNav("write");setCastOpen(false);}
                 else{setNav(item.id);setCastOpen(false);}
               }} style={{width:36,height:36,borderRadius:8,border:"none",background:isActive?"#000":"transparent",color:isActive?"#FFF":"#999",cursor:"pointer",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.12s"}}>{item.icon}</button>
@@ -2388,6 +2548,13 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
               </div>
             );
           })()}
+          {user&&(
+            <div style={{position:"relative",width:"100%",display:"flex",justifyContent:"center"}}
+              onMouseEnter={()=>setHoveredNav("signout")} onMouseLeave={()=>setHoveredNav(null)}>
+              <button onClick={()=>onSignOut&&onSignOut()} style={{width:28,height:28,borderRadius:6,border:"1px solid #E8E8E8",background:"none",color:"#AAA",cursor:"pointer",fontSize:12,display:"flex",alignItems:"center",justifyContent:"center"}}>⏻</button>
+              {hoveredNav==="signout"&&<div style={{position:"absolute",left:44,top:"50%",transform:"translateY(-50%)",background:"#000",color:"#FFF",padding:"4px 10px",borderRadius:4,fontSize:11,fontWeight:700,whiteSpace:"nowrap",pointerEvents:"none",zIndex:700}}>Sign out</div>}
+            </div>
+          )}
           <button onClick={newProject} style={{width:36,height:36,borderRadius:8,border:"1px dashed #CCC",background:"none",color:"#CCC",cursor:"pointer",fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
         </div>
       </div>
@@ -2419,15 +2586,13 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
                 )}
               </div>
               <div style={{width:1,height:20,background:"#EBEBEB",flexShrink:0}}/>
-              <select value={active.format} onChange={e=>updateProject(active.id,{format:e.target.value})} style={{background:"none",border:"none",color:"#888",fontSize:12,outline:"none",fontFamily:"inherit",cursor:"pointer",flexShrink:0}}>
-                {FORMATS.map(f=><option key={f.id} value={f.id}>{f.label}</option>)}
-              </select>
-              <div style={{width:1,height:20,background:"#EBEBEB",flexShrink:0}}/>
               {AI_FEATURES_ENABLED&&(<button onClick={()=>setAiOpen(o=>!o)} style={{padding:"6px 14px",borderRadius:4,flexShrink:0,border:`1px solid ${aiOpen?"#000":"#D0D0D0"}`,background:aiOpen?"#000":"#FAFAFA",color:aiOpen?"#FFF":"#444",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:6}}>✦ AI<span style={{fontSize:10,color:aiOpen?"#888":"#BBB",fontWeight:500}}>⌘K</span></button>)}
               <button onClick={()=>setImportOpen(true)} style={{padding:"6px 12px",borderRadius:4,border:"1px solid #D0D0D0",flexShrink:0,background:"#FAFAFA",color:"#555",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>↑ Import</button>
+              <button onClick={()=>setExportOpen(true)} style={{padding:"6px 12px",borderRadius:4,border:"1px solid #D0D0D0",flexShrink:0,background:"#FAFAFA",color:"#555",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>↓ Export</button>
               <button onClick={()=>setSceneNavCollapsed(o=>!o)} style={{padding:"6px 10px",borderRadius:4,flexShrink:0,border:`1px solid ${!sceneNavCollapsed?"#000":"#D0D0D0"}`,background:!sceneNavCollapsed?"#000":"#FAFAFA",color:!sceneNavCollapsed?"#FFF":"#555",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>≡ Scenes</button>
               <button onClick={()=>setGalleryOpen(o=>!o)} style={{padding:"6px 10px",borderRadius:4,flexShrink:0,border:`1px solid ${galleryOpen?"#000":"#D0D0D0"}`,background:galleryOpen?"#000":"#FAFAFA",color:galleryOpen?"#FFF":"#555",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>⬚ Gallery</button>
               <button onClick={()=>setCharPanelOpen(o=>!o)} style={{padding:"6px 10px",borderRadius:4,flexShrink:0,border:`1px solid ${charPanelOpen?"#000":"#D0D0D0"}`,background:charPanelOpen?"#000":"#FAFAFA",color:charPanelOpen?"#FFF":"#555",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>◉ Cast</button>
+              <button onClick={()=>setNotesOpen(o=>!o)} style={{padding:"6px 10px",borderRadius:4,flexShrink:0,border:`1px solid ${notesOpen?"#000":"#D0D0D0"}`,background:notesOpen?"#000":"#FAFAFA",color:notesOpen?"#FFF":"#555",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>≡ Notes</button>
             </>
           )}
           {nav!=="write"&&<p style={{margin:0,fontSize:14,fontWeight:800,color:"#000",letterSpacing:"0.04em",textTransform:"uppercase"}}>{NAV_ITEMS.find(n=>n.id===nav)?.label}</p>}
@@ -2463,6 +2628,14 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
               <div style={{maxWidth:480}}>
                 <h2 style={{fontSize:28,fontWeight:900,color:"#000",margin:"0 0 32px",letterSpacing:"-0.02em"}}>Profile</h2>
                 <div style={{display:"flex",flexDirection:"column",gap:16}}>
+                  {active&&(
+                    <div>
+                      <label style={css.label}>Format — "{active.title||"Untitled"}"</label>
+                      <select value={active.format} onChange={e=>updateProject(active.id,{format:e.target.value})} style={{...css.input,fontSize:13}}>
+                        {FORMATS.map(f=><option key={f.id} value={f.id}>{f.label}</option>)}
+                      </select>
+                    </div>
+                  )}
                   <div>
                     <label style={css.label}>Name</label>
                     <input value={profile.name||""} onChange={e=>{onUpdateProfile&&onUpdateProfile({name:e.target.value});}}
@@ -2502,6 +2675,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
         </div>
 
         {importOpen&&<ImportModal profile={profile} onImport={importScript} onClose={()=>setImportOpen(false)}/>}
+        {exportOpen&&active&&<ExportModal project={active} onClose={()=>setExportOpen(false)}/>}
         {AI_FEATURES_ENABLED&&aiOpen&&active&&<AIPanel project={active} cast={cast} onClose={()=>setAiOpen(false)} onGoToProfile={()=>{setNav("profile");setAiOpen(false);}}/>}
         {titlePageEditorOpen&&active&&(
           <TitlePageEditor project={active} profile={profile}
@@ -2554,13 +2728,13 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
 
 // ─── ROOT ─────────────────────────────────────────────────────────────────────
 function Root(){
-  // Bug fix: this was 30 minutes, checked against mouse/keyboard activity —
-  // so stepping away (or just reading/scrolling without touching the
-  // keyboard) for half an hour signed you out mid-session. There's no real
-  // server-side auth here to protect, so "session expiry" should mean a
-  // long real absence, not a short quiet moment. Signing out is otherwise
-  // always explicit (the Sign out button).
-  const SESSION_TIMEOUT=30*24*60*60*1000; // 30 days
+  // Session policy (per explicit instruction): signed out after 30 minutes
+  // of no mouse/keyboard activity, AND signed out immediately if the page
+  // is closed, refreshed, or navigated away from — logging back in is
+  // required each time you return. See the beforeunload handler below for
+  // the close/leave case; this timeout handles the "stayed open, went
+  // quiet" case.
+  const SESSION_TIMEOUT=30*60*1000; // 30 minutes
   const loadUser=()=>{
     const saved=LS.get("sf_current_user",null);if(!saved) return null;
     const lastActive=LS.get("sf_last_active",0);
@@ -2585,6 +2759,16 @@ function Root(){
   useEffect(()=>{
     const h=()=>{if(document.visibilityState==="visible"){const la=LS.get("sf_last_active",0);if(user&&Date.now()-la>SESSION_TIMEOUT)signOut();}};
     document.addEventListener("visibilitychange",h);return()=>document.removeEventListener("visibilitychange",h);
+  },[user]);
+
+  // Log out on close/leave. Written straight to localStorage rather than
+  // through setUser/signOut — the page is on its way out, and a scheduled
+  // React state update isn't guaranteed to run before it actually unloads,
+  // but a plain synchronous localStorage write is.
+  useEffect(()=>{
+    const onLeave=()=>{if(user){LS.set("sf_current_user",null);LS.set("sf_last_active",null);}};
+    window.addEventListener("beforeunload",onLeave);
+    return()=>window.removeEventListener("beforeunload",onLeave);
   },[user]);
 
   const enter=()=>{if(!user){setAuthMode("signup");setScreen("auth");return;}setScreen("dashboard");};
