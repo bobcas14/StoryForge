@@ -14,6 +14,7 @@
     select { appearance: auto; }
     #print-area { position: absolute; left: -9999px; top: 0; width: 8.5in; }
     @media print {
+      @page { margin: 0; }
       body * { visibility: hidden; }
       #print-area, #print-area * { visibility: visible; }
       #print-area { position: absolute; left: 0; top: 0; width: 100%; }
@@ -1800,6 +1801,17 @@ function classifyScriptText(rawText,format){
 // ("// private note — not in final script") so every export format skips them.
 function escapeHtml(s){return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
 
+// Imported/typed dialogue sometimes has a leading parenthetical jammed
+// straight against the line with no space, e.g. "(Laughing)Thanks
+// everyone..." — industry format puts the parenthetical on its own
+// indented line above the dialogue. This splits that out for every export
+// format instead of printing it as one run-on line.
+function splitLeadingParen(text){
+  const m=text.match(/^(\([^)]*\))\s*(.*)$/s);
+  if(m&&m[2]) return{paren:m[1],rest:m[2]};
+  return null;
+}
+
 function downloadText(filename,content){
   const blob=new Blob([content],{type:"text/plain;charset=utf-8"});
   const url=URL.createObjectURL(blob);
@@ -1817,7 +1829,11 @@ function buildPlainText(project){
     if(!text||l.mode==="note") return;
     if(l.mode==="location") out+=`\n${text.toUpperCase()}\n\n`;
     else if(l.mode==="character") out+=`\n${" ".repeat(20)}${text.toUpperCase()}\n`;
-    else if(l.mode==="dialogue") out+=`${" ".repeat(10)}${text}\n`;
+    else if(l.mode==="dialogue"){
+      const split=splitLeadingParen(text);
+      if(split) out+=`${" ".repeat(14)}${split.paren}\n${" ".repeat(10)}${split.rest}\n`;
+      else out+=`${" ".repeat(10)}${text}\n`;
+    }
     else if(l.mode==="direction") out+=`${" ".repeat(14)}(${text.replace(/^\(|\)$/g,"")})\n`;
     else out+=`${text}\n\n`;
   });
@@ -1835,19 +1851,27 @@ function buildFountain(project,opts){
     if(!text||l.mode==="note") return;
     if(l.mode==="location"){sceneNum++;out+=`\n${text.toUpperCase()}${sceneNumbers?` #${sceneNum}#`:""}\n`;}
     else if(l.mode==="character") out+=`\n${text.toUpperCase()}\n`;
-    else if(l.mode==="dialogue") out+=`${text}\n`;
+    else if(l.mode==="dialogue"){
+      const split=splitLeadingParen(text);
+      if(split) out+=`${split.paren}\n${split.rest}\n`;
+      else out+=`${text}\n`;
+    }
     else if(l.mode==="direction") out+=`${text.startsWith("(")?text:`(${text})`}\n`;
     else out+=`\n${text}\n`;
   });
   return out;
 }
 
+// Real screenplay margins — 1.5in on the left (for hole-punch binding),
+// 1in on the other three sides — baked directly into the exported content
+// itself (not left to the browser's own default print margins, which vary
+// by browser/OS and were the cause of the "too close to the edges" look).
 function buildPrintHtml(project,opts){
   const {sceneNumbers}=opts||{};
   const title=escapeHtml(project.title||"Untitled");
   const author=escapeHtml(project.writtenBy||"");
   let sceneNum=0;
-  let html=`<div style="font-family:'Courier New',Courier,monospace;font-size:12pt;text-align:center;margin-top:3in;">
+  let html=`<div style="font-family:'Courier New',Courier,monospace;font-size:12pt;text-align:center;margin-top:2in;">
     <p style="margin:0 0 24pt;">${title.toUpperCase()}</p>
     ${author?`<p style="margin:0;">Written by</p><p style="margin:0;">${author}</p>`:""}
   </div><div style="page-break-after:always;"></div>
@@ -1862,11 +1886,20 @@ function buildPrintHtml(project,opts){
       html+=`<p style="margin:12pt 0 0;font-weight:bold;">${num}${text.toUpperCase()}${numRight}</p>`;
     }
     else if(l.mode==="character") html+=`<p style="margin:12pt 0 0 2.2in;">${text.toUpperCase()}</p>`;
-    else if(l.mode==="dialogue") html+=`<p style="margin:0 1.5in 0 1in;">${text}</p>`;
+    else if(l.mode==="dialogue"){
+      const split=splitLeadingParen(text);
+      if(split){
+        html+=`<p style="margin:0 1.5in 0 1.6in;font-style:italic;">${split.paren}</p>`;
+        html+=`<p style="margin:0 1.5in 0 1in;">${split.rest}</p>`;
+      }else{
+        html+=`<p style="margin:0 1.5in 0 1in;">${text}</p>`;
+      }
+    }
     else if(l.mode==="direction") html+=`<p style="margin:0 0 0 1.6in;">(${text.replace(/^\(|\)$/g,"")})</p>`;
     else html+=`<p style="margin:12pt 0 0;">${text}</p>`;
   });
   html+="</div>";
+  html=`<div style="padding:1in 1in 1in 1.5in;box-sizing:border-box;">${html}</div>`;
   return html;
 }
 
@@ -2035,7 +2068,7 @@ function ExportModal({project,cast,onClose}){
             </div>
           </div>
           <div style={{flex:1,overflow:"auto",padding:"24px 0",display:"flex",justifyContent:"center"}}>
-            <div style={{width:"8.5in",background:"#FFF",boxShadow:"0 2px 16px rgba(0,0,0,0.15)",padding:"1in",boxSizing:"border-box"}} dangerouslySetInnerHTML={{__html:buildPrintHtml(project,{sceneNumbers})}}/>
+            <div style={{width:"8.5in",background:"#FFF",boxShadow:"0 2px 16px rgba(0,0,0,0.15)",boxSizing:"border-box"}} dangerouslySetInnerHTML={{__html:buildPrintHtml(project,{sceneNumbers})}}/>
           </div>
         </div>
       )}
