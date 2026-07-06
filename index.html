@@ -272,6 +272,41 @@ function PageBreakDivider({pageNum,title,format,dark}){
 }
 
 // ─── TITLE PAGE ───────────────────────────────────────────────────────────────
+// ─── FREE PAGE ──────────────────────────────────────────────────────────────
+// A non-screenplay page you can drop into the flow anywhere — an image, free
+// text, or both. Deliberately kept OUTSIDE the lines[] array and its
+// uncontrolled-textarea system entirely (stored on the project as its own
+// freePages array) so it can't interfere with the fragile per-line editor,
+// undo history, DOCX parsing, or pagination. A single controlled textarea
+// here is safe since it's fully isolated, one per free page.
+function FreePageBlock({page,onChange,onDelete,dark}){
+  const fileRef=useRef(null);
+  const handleImage=(e)=>{
+    const file=e.target.files?.[0];if(!file) return;
+    const reader=new FileReader();reader.onload=ev=>onChange({...page,image:ev.target.result});
+    reader.readAsDataURL(file);e.target.value="";
+  };
+  return(
+    <div style={{width:816,margin:"40px auto",background:dark?"#242424":"#FFFFFF",
+      boxShadow:dark?"0 0 60px rgba(0,0,0,0.55)":"0 2px 16px rgba(0,0,0,0.18)",
+      minHeight:1056,padding:"64px 80px",boxSizing:"border-box",position:"relative",
+      fontFamily:"-apple-system,'Segoe UI',sans-serif",transition:"background 0.25s ease"}}>
+      <div style={{position:"absolute",top:16,left:80,fontSize:9,fontWeight:800,color:dark?"#666":"#CCC",letterSpacing:"0.12em",textTransform:"uppercase"}}>Free Page</div>
+      <div style={{position:"absolute",top:16,right:16,display:"flex",gap:8,alignItems:"center"}}>
+        <button onClick={()=>onChange({...page,position:page.position==="back"?"front":"back"})} title="Toggle whether this sits before the script or after it" style={{background:"none",border:`1px solid ${dark?"#444":"#D0D0D0"}`,borderRadius:4,padding:"4px 10px",fontSize:10,cursor:"pointer",color:dark?"#888":"#AAA",fontWeight:700,textTransform:"uppercase"}}>{page.position==="back"?"↑ Move to front":"↓ Move to back"}</button>
+        <button onClick={onDelete} title="Remove this page" style={{background:"none",border:`1px solid ${dark?"#444":"#D0D0D0"}`,borderRadius:4,padding:"4px 10px",fontSize:10,cursor:"pointer",color:dark?"#888":"#AAA",fontWeight:700,textTransform:"uppercase"}}>Remove</button>
+      </div>
+      <div onClick={()=>fileRef.current?.click()} style={{border:`1px dashed ${dark?"#444":"#D0D0D0"}`,borderRadius:6,minHeight:240,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",marginTop:24,marginBottom:24,overflow:"hidden",background:dark?"#1E1E1E":"#FAFAFA"}}>
+        {page.image?<img src={page.image} alt="" style={{width:"100%",maxHeight:420,objectFit:"contain"}}/>:<p style={{margin:0,fontSize:12,color:dark?"#777":"#BBB"}}>Click to add an image</p>}
+      </div>
+      <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={handleImage}/>
+      <textarea value={page.text} onChange={e=>onChange({...page,text:e.target.value})} placeholder="Type anything — treatment notes, captions, a cover blurb..."
+        style={{width:"100%",minHeight:200,border:"none",outline:"none",resize:"vertical",background:"transparent",fontFamily:"inherit",fontSize:14,lineHeight:1.8,color:dark?"#E0E0E0":"#222"}}/>
+    </div>
+  );
+}
+
+// ─── TITLE PAGE ───────────────────────────────────────────────────────────────
 function TitlePage({project,profile,onEdit,format,dark}){
   const isNovel=format==="novel"||format==="audiobook";
   const title=(project?.title||"UNTITLED").toUpperCase();
@@ -411,7 +446,7 @@ function LineVoiceControl({audio,onRecorded}){
   );
 }
 
-function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageChange,focusMode,scrollRef,darkCanvas,onCharFocus,profile,onEditTitlePage,onForceSave,flushRef,undoRedoRef}){
+function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageChange,focusMode,scrollRef,darkCanvas,onCharFocus,profile,onEditTitlePage,onForceSave,flushRef,undoRedoRef,freePages,onUpdateFreePages}){
   const [lines,setLines]=useState(()=>
     project?.lines?.length?project.lines:[{id:Date.now(),text:"",mode:"action"}]
   );
@@ -959,6 +994,20 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
       <ModePill mode={lines[curLine]?.mode||"action"} visible={pillVisible} x={pillPos.x} y={pillPos.y}/>
 
       <TitlePage project={project} profile={profile} format={format} dark={darkCanvas} onEdit={onEditTitlePage||(() => {})}/>
+
+      {/* Free Pages: image/text pages outside the screenplay format. These
+          attach to the front (right after the title page) or back (after
+          the last script page) rather than an arbitrary specific page
+          number — the script currently renders as one continuous flowing
+          block rather than discrete per-page containers, so a precise
+          mid-script insertion point would need a bigger structural change
+          than this. */}
+      {(freePages||[]).filter(fp=>fp.position!=="back").map(fp=>(
+        <FreePageBlock key={fp.id} page={fp} dark={darkCanvas}
+          onChange={updated=>onUpdateFreePages((freePages||[]).map(f=>f.id===updated.id?updated:f))}
+          onDelete={()=>onUpdateFreePages((freePages||[]).filter(f=>f.id!==fp.id))}/>
+      ))}
+
       <div style={{height:40}}/>
 
       <div style={{width:816,margin:"0 auto",background:darkCanvas?"#242424":"#FFFFFF",
@@ -1052,6 +1101,12 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
         </div>
         <div style={{height:96}}/>
       </div>
+
+      {(freePages||[]).filter(fp=>fp.position==="back").map(fp=>(
+        <FreePageBlock key={fp.id} page={fp} dark={darkCanvas}
+          onChange={updated=>onUpdateFreePages((freePages||[]).map(f=>f.id===updated.id?updated:f))}
+          onDelete={()=>onUpdateFreePages((freePages||[]).filter(f=>f.id!==fp.id))}/>
+      ))}
 
       {popup.visible&&(
         <CharPopup matches={popup.matches} query={popup.query}
@@ -2463,6 +2518,38 @@ function SceneNavigator({lines,onJumpTo,collapsed,onToggle,statuses,onUpdateStat
   );
 }
 
+function PageOverview({lines,onJumpTo,onClose}){
+  const pages=[];
+  let currentPage=1,snippet="",startIdx=0;
+  (lines||[]).forEach((line,idx)=>{
+    const page=Math.floor(idx/LINES_PER_PAGE)+1;
+    if(page!==currentPage){
+      pages.push({num:currentPage,idx:startIdx,snippet:snippet||"(blank)"});
+      currentPage=page;snippet="";startIdx=idx;
+    }
+    if(!snippet&&line.text?.trim()) snippet=line.text.trim().slice(0,44);
+  });
+  pages.push({num:currentPage,idx:startIdx,snippet:snippet||"(blank)"});
+  return(
+    <div style={{width:200,minWidth:200,borderLeft:"1px solid #EBEBEB",background:"#FAFAFA",display:"flex",flexDirection:"column",flexShrink:0,overflow:"hidden"}}>
+      <div style={{padding:"12px 14px 10px",borderBottom:"1px solid #EBEBEB",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+        <span style={{fontSize:9,fontWeight:800,color:"#AAA",letterSpacing:"0.14em",textTransform:"uppercase"}}>Page Overview</span>
+        <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",color:"#CCC",fontSize:14,padding:0}}>×</button>
+      </div>
+      <div style={{flex:1,overflowY:"auto"}}>
+        {(lines||[]).length===0&&<p style={{padding:"16px 12px",fontSize:11,color:"#CCC",fontStyle:"italic"}}>Nothing written yet.</p>}
+        {pages.map(p=>(
+          <div key={p.num} onClick={()=>onJumpTo(p.idx)} style={{padding:"8px 12px",borderBottom:"1px solid #F0F0F0",cursor:"pointer"}}
+            onMouseEnter={e=>e.currentTarget.style.background="#F5F5F5"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+            <span style={{fontSize:9,fontWeight:800,color:"#000"}}>p.{p.num}</span>
+            <p style={{margin:"2px 0 0",fontSize:10.5,color:"#888",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.snippet}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function FormatGuide({format,onClose}){
   const cycle=FORMAT_CYCLES[format]||FORMAT_CYCLES.film;
   const tips={action:"Describe what happens — full width, present tense.",character:"Character name — auto-uppercase, centered.",dialogue:"What they say — indented column.",location:"INT./EXT. LOCATION — DAY/NIGHT.",direction:"(Parenthetical) — acting note.",note:"// private note — not in final script."};
@@ -2619,6 +2706,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
   const [aiOpen,setAiOpen]=useState(false);
   const [castOpen,setCastOpen]=useState(false);
   const [notesOpen,setNotesOpen]=useState(false);
+  const [overviewOpen,setOverviewOpen]=useState(false);
   const [beatsOpen,setBeatsOpen]=useState(false);
   const [beatsExpanded,setBeatsExpanded]=useState(false);
   const [moodOpen,setMoodOpen]=useState(false);
@@ -2695,6 +2783,8 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
   const updateBeats=(changes)=>{if(active)updateProject(active.id,changes);};
   const updateSceneStatuses=(statuses)=>{if(active)updateProject(active.id,{sceneStatuses:statuses});};
   const updateSceneGallery=(changes)=>{if(active)updateProject(active.id,changes);};
+  const updateFreePages=(freePages)=>{if(active)updateProject(active.id,{freePages});};
+  const addFreePage=()=>{updateFreePages([...(active?.freePages||[]),{id:Date.now(),position:"front",image:null,text:""}]);};
 
   const importScript=(imported)=>{
     const p={id:Date.now(),title:imported.title,format:imported.format,genre:imported.genre,lines:imported.lines,cast:imported.cast||[],notes:"",moodCards:[],beats:[],sceneGallery:[],created:Date.now()};
@@ -2738,7 +2828,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
             </div>
           </div>
           <div style={{flex:1,overflow:"hidden"}}>
-            {active&&<SmartEditor project={active} cast={cast} onUpdateContent={updateLines} onAddCharacter={addCharacter} format={active.format} onPageChange={(cur,total)=>setPageInfo({cur,total})} focusMode={true} scrollRef={sceneNavRef} profile={profile} onEditTitlePage={()=>setTitlePageEditorOpen(true)} onForceSave={forceSaveNow} flushRef={flushRef} undoRedoRef={undoRedoRef}/>}
+            {active&&<SmartEditor project={active} cast={cast} onUpdateContent={updateLines} onAddCharacter={addCharacter} format={active.format} onPageChange={(cur,total)=>setPageInfo({cur,total})} focusMode={true} scrollRef={sceneNavRef} profile={profile} onEditTitlePage={()=>setTitlePageEditorOpen(true)} onForceSave={forceSaveNow} flushRef={flushRef} undoRedoRef={undoRedoRef} freePages={active.freePages} onUpdateFreePages={updateFreePages}/>}
           </div>
         </div>
       )}
@@ -2850,7 +2940,9 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
               {AI_FEATURES_ENABLED&&(<button onClick={()=>setAiOpen(o=>!o)} style={{padding:"6px 14px",borderRadius:4,flexShrink:0,border:`1px solid ${aiOpen?"#000":"#D0D0D0"}`,background:aiOpen?"#000":"#FAFAFA",color:aiOpen?"#FFF":"#444",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:6}}>✦ AI<span style={{fontSize:10,color:aiOpen?"#888":"#BBB",fontWeight:500}}>⌘K</span></button>)}
               <button onClick={()=>setImportOpen(true)} style={{padding:"6px 12px",borderRadius:4,border:"1px solid #D0D0D0",flexShrink:0,background:"#FAFAFA",color:"#555",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>↑ Import</button>
               <button onClick={()=>setExportOpen(true)} style={{padding:"6px 12px",borderRadius:4,border:"1px solid #D0D0D0",flexShrink:0,background:"#FAFAFA",color:"#555",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>↓ Export</button>
+              <button onClick={addFreePage} title="Insert a free-form page for an image, notes, or a cover — attaches to the front or back of the script" style={{padding:"6px 12px",borderRadius:4,border:"1px solid #D0D0D0",flexShrink:0,background:"#FAFAFA",color:"#555",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>+ Page</button>
               <button onClick={()=>setSceneNavCollapsed(o=>!o)} style={{padding:"6px 10px",borderRadius:4,flexShrink:0,border:`1px solid ${!sceneNavCollapsed?"#000":"#D0D0D0"}`,background:!sceneNavCollapsed?"#000":"#FAFAFA",color:!sceneNavCollapsed?"#FFF":"#555",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>≡ Scenes</button>
+              <button onClick={()=>setOverviewOpen(o=>!o)} title="A simple per-page list to jump around — not a visual thumbnail grid" style={{padding:"6px 10px",borderRadius:4,flexShrink:0,border:`1px solid ${overviewOpen?"#000":"#D0D0D0"}`,background:overviewOpen?"#000":"#FAFAFA",color:overviewOpen?"#FFF":"#555",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>▤ Overview</button>
               <button onClick={()=>setGalleryOpen(o=>!o)} title="Upload images and link them to a page range — your storyboard/shot list" style={{padding:"6px 10px",borderRadius:4,flexShrink:0,border:`1px solid ${galleryOpen?"#000":"#D0D0D0"}`,background:galleryOpen?"#000":"#FAFAFA",color:galleryOpen?"#FFF":"#555",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>⬚ Storyboard</button>
               <button onClick={()=>setCharPanelOpen(o=>!o)} title="Quick-reference card for whichever character you're currently writing" style={{padding:"6px 10px",borderRadius:4,flexShrink:0,border:`1px solid ${charPanelOpen?"#000":"#D0D0D0"}`,background:charPanelOpen?"#000":"#FAFAFA",color:charPanelOpen?"#FFF":"#555",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>◉ Character Info</button>
               <button onClick={()=>setNotesOpen(o=>!o)} style={{padding:"6px 10px",borderRadius:4,flexShrink:0,border:`1px solid ${notesOpen?"#000":"#D0D0D0"}`,background:notesOpen?"#000":"#FAFAFA",color:notesOpen?"#FFF":"#555",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>≡ Notes</button>
@@ -2898,7 +2990,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
           {nav==="write"&&(
             active?(
               <div style={{display:((beatsOpen&&beatsExpanded)||(moodOpen&&moodExpanded))?"none":"flex",flex:1,minWidth:0}}>
-                <SmartEditor project={active} cast={cast} onUpdateContent={updateLines} onAddCharacter={addCharacter} format={active.format} onPageChange={(cur,total)=>setPageInfo({cur,total})} focusMode={focusMode} scrollRef={sceneNavRef} darkCanvas={darkCanvas} onCharFocus={setCurrentCharName} key={active?.id} profile={profile} onEditTitlePage={()=>setTitlePageEditorOpen(true)} onForceSave={forceSaveNow} flushRef={flushRef} undoRedoRef={undoRedoRef}/>
+                <SmartEditor project={active} cast={cast} onUpdateContent={updateLines} onAddCharacter={addCharacter} format={active.format} onPageChange={(cur,total)=>setPageInfo({cur,total})} focusMode={focusMode} scrollRef={sceneNavRef} darkCanvas={darkCanvas} onCharFocus={setCurrentCharName} key={active?.id} profile={profile} onEditTitlePage={()=>setTitlePageEditorOpen(true)} onForceSave={forceSaveNow} flushRef={flushRef} undoRedoRef={undoRedoRef} freePages={active.freePages} onUpdateFreePages={updateFreePages}/>
               </div>
             ):(
               <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16}}>
@@ -2908,9 +3000,10 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
             )
           )}
 
-          {(charPanelOpen||galleryOpen||notesOpen||!sceneNavCollapsed)&&nav==="write"&&(
+          {(charPanelOpen||galleryOpen||notesOpen||overviewOpen||!sceneNavCollapsed)&&nav==="write"&&(
             <div style={{position:"fixed",top:48,right:0,bottom:32,display:"flex",zIndex:300,boxShadow:"-4px 0 20px rgba(0,0,0,0.08)"}}>
               {!sceneNavCollapsed&&<SceneNavigator lines={active?.lines||[]} onJumpTo={jumpToLine} collapsed={sceneNavCollapsed} onToggle={()=>setSceneNavCollapsed(o=>!o)} statuses={active?.sceneStatuses} onUpdateStatuses={updateSceneStatuses}/>}
+              {overviewOpen&&<PageOverview lines={active?.lines||[]} onJumpTo={jumpToLine} onClose={()=>setOverviewOpen(false)}/>}
               {charPanelOpen&&<CharacterContextPanel cast={cast} currentCharName={currentCharName} onClose={()=>setCharPanelOpen(false)}/>}
               {galleryOpen&&active&&<SceneGallery project={active} onUpdate={updateSceneGallery} currentPage={pageInfo.cur}/>}
               {notesOpen&&active&&<NotesPanel notes={active?.notes||""} onChange={updateNotes} onClose={()=>setNotesOpen(false)}/>}
