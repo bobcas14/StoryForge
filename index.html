@@ -99,6 +99,88 @@ const LS = {
   set:(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch{}},
 };
 
+// ── MEDIA STORE (IndexedDB) ─────────────────────────────────────────────────
+// Character photos, storyboard images, free-page images, and voice-over
+// takes used to live as base64 text directly inside the project's own JSON
+// blob in localStorage (capped around 5-10MB total, shared across every
+// project). That's fine for a couple of photos; it falls over for a real
+// audiobook's worth of takes or a production's worth of storyboard art.
+// Blobs now live in IndexedDB (effectively unbounded by comparison) and
+// only a small reference key is stored on the project/cast/etc. object.
+// Existing projects with old inline "data:" URLs keep working unchanged —
+// isMediaKey/useMediaUrl below transparently support both, so nothing that
+// was already saved needs to be migrated by hand.
+const MediaStore=(()=>{
+  const DB_NAME="sf_media",STORE="blobs";
+  let dbPromise=null;
+  const openDB=()=>{
+    if(dbPromise) return dbPromise;
+    dbPromise=new Promise((resolve,reject)=>{
+      if(!window.indexedDB){reject(new Error("IndexedDB unavailable"));return;}
+      const req=indexedDB.open(DB_NAME,1);
+      req.onupgradeneeded=()=>{req.result.createObjectStore(STORE);};
+      req.onsuccess=()=>resolve(req.result);
+      req.onerror=()=>reject(req.error);
+    });
+    return dbPromise;
+  };
+  return{
+    async set(key,blob){
+      const db=await openDB();
+      return new Promise((resolve,reject)=>{
+        const tx=db.transaction(STORE,"readwrite");
+        tx.objectStore(STORE).put(blob,key);
+        tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);
+      });
+    },
+    async get(key){
+      const db=await openDB();
+      return new Promise((resolve,reject)=>{
+        const tx=db.transaction(STORE,"readonly");
+        const req=tx.objectStore(STORE).get(key);
+        req.onsuccess=()=>resolve(req.result||null);
+        req.onerror=()=>reject(req.error);
+      });
+    },
+    async delete(key){
+      const db=await openDB();
+      return new Promise((resolve,reject)=>{
+        const tx=db.transaction(STORE,"readwrite");
+        tx.objectStore(STORE).delete(key);
+        tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);
+      });
+    },
+  };
+})();
+const genMediaKey=()=>`idb:${Date.now()}-${Math.random().toString(36).slice(2)}`;
+const isMediaKey=(v)=>typeof v==="string"&&v.startsWith("idb:");
+
+// Resolves either a legacy inline "data:" URL or a new IndexedDB key into a
+// displayable/playable object URL. Returns null while loading or if empty
+// — callers already treat a falsy image/audio as "nothing set", so a brief
+// loading gap just looks like the same empty state for a moment.
+function useMediaUrl(ref){
+  const [url,setUrl]=useState(null);
+  useEffect(()=>{
+    if(!ref){setUrl(null);return;}
+    if(!isMediaKey(ref)){setUrl(ref);return;} // legacy inline data: URL
+    let cancelled=false,objectUrl=null;
+    MediaStore.get(ref).then(blob=>{
+      if(cancelled||!blob) return;
+      objectUrl=URL.createObjectURL(blob);
+      setUrl(objectUrl);
+    }).catch(()=>{});
+    return ()=>{cancelled=true;if(objectUrl) URL.revokeObjectURL(objectUrl);};
+  },[ref]);
+  return url;
+}
+
+function MediaImage({src,alt,style}){
+  const url=useMediaUrl(src);
+  if(!url) return null;
+  return <img src={url} alt={alt||""} style={style}/>;
+}
+
 async function parseApiResponse(res) {
   const ct = res.headers.get("content-type")||"";
   if(!res.ok||!ct.includes("application/json")){
@@ -283,8 +365,9 @@ function FreePageBlock({page,onChange,onDelete,dark}){
   const fileRef=useRef(null);
   const handleImage=(e)=>{
     const file=e.target.files?.[0];if(!file) return;
-    const reader=new FileReader();reader.onload=ev=>onChange({...page,image:ev.target.result});
-    reader.readAsDataURL(file);e.target.value="";
+    const key=genMediaKey();
+    MediaStore.set(key,file).then(()=>onChange({...page,image:key}));
+    e.target.value="";
   };
   return(
     <div style={{width:816,margin:"40px auto",background:dark?"#242424":"#FFFFFF",
@@ -297,7 +380,7 @@ function FreePageBlock({page,onChange,onDelete,dark}){
         <button onClick={onDelete} title="Remove this page" style={{background:"none",border:`1px solid ${dark?"#444":"#D0D0D0"}`,borderRadius:4,padding:"4px 10px",fontSize:10,cursor:"pointer",color:dark?"#888":"#AAA",fontWeight:700,textTransform:"uppercase"}}>Remove</button>
       </div>
       <div onClick={()=>fileRef.current?.click()} style={{border:`1px dashed ${dark?"#444":"#D0D0D0"}`,borderRadius:6,minHeight:240,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",marginTop:24,marginBottom:24,overflow:"hidden",background:dark?"#1E1E1E":"#FAFAFA"}}>
-        {page.image?<img src={page.image} alt="" style={{width:"100%",maxHeight:420,objectFit:"contain"}}/>:<p style={{margin:0,fontSize:12,color:dark?"#777":"#BBB"}}>Click to add an image</p>}
+        {page.image?<MediaImage src={page.image} style={{width:"100%",maxHeight:420,objectFit:"contain"}}/>:<p style={{margin:0,fontSize:12,color:dark?"#777":"#BBB"}}>Click to add an image</p>}
       </div>
       <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={handleImage}/>
       <textarea value={page.text} onChange={e=>onChange({...page,text:e.target.value})} placeholder="Type anything — treatment notes, captions, a cover blurb..."
@@ -422,9 +505,17 @@ function LineVoiceControl({audio,onRecorded}){
       rec.ondataavailable=e=>{if(e.data.size>0)chunksRef.current.push(e.data);};
       rec.onstop=()=>{
         const blob=new Blob(chunksRef.current,{type:rec.mimeType||"audio/webm"});
-        const reader=new FileReader();
-        reader.onload=()=>onRecorded(reader.result);
-        reader.readAsDataURL(blob);
+        // Store the recorded Blob directly — no base64 round-trip needed,
+        // MediaRecorder already hands us a real Blob. Only a small
+        // reference key ends up on the line itself. If re-recording over
+        // an existing take, clean up the old blob so it doesn't sit
+        // around unused in IndexedDB forever.
+        const oldKey=isMediaKey(audio)?audio:null;
+        const newKey=genMediaKey();
+        MediaStore.set(newKey,blob).then(()=>{
+          onRecorded(newKey);
+          if(oldKey) MediaStore.delete(oldKey).catch(()=>{});
+        });
         stream.getTracks().forEach(t=>t.stop());
       };
       rec.start();mediaRef.current=rec;setRecording(true);
@@ -433,7 +524,17 @@ function LineVoiceControl({audio,onRecorded}){
     }
   };
   const stop=()=>{mediaRef.current?.stop();setRecording(false);};
-  const play=()=>{if(audio)new Audio(audio).play();};
+  const play=async()=>{
+    if(!audio) return;
+    // Recordings are only ever loaded off disk at the moment you actually
+    // hit play — never kept resident just because a project has them.
+    if(isMediaKey(audio)){
+      const blob=await MediaStore.get(audio);
+      if(blob){const url=URL.createObjectURL(blob);const a=new Audio(url);a.play();a.onended=()=>URL.revokeObjectURL(url);}
+    }else{
+      new Audio(audio).play(); // legacy inline data: URL from before this change
+    }
+  };
   return(
     <span style={{display:"inline-flex",alignItems:"center",gap:5}} onMouseDown={e=>e.stopPropagation()}>
       {recording?(
@@ -476,6 +577,76 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
   const lineHeights=useRef({});
   const wrapperRefs=useRef({});
   const pageCounterRef=useRef(null);
+
+  // ── VIRTUALIZATION ──────────────────────────────────────────────────────
+  // A feature-length script can run 4,000-6,000+ lines. Rendering every one
+  // as a live <textarea> regardless of scroll position is the actual
+  // reason a long script starts to feel sluggish — thousands of real DOM
+  // nodes with attached handlers sitting in memory whether they're on
+  // screen or not. This renders only a window of lines around wherever the
+  // cursor currently is; spacer divs (sized from the same per-line height
+  // measurements pagination already tracks) stand in for the rest so the
+  // scrollbar and scroll position still behave correctly. Short documents
+  // are completely unaffected — the window just covers the whole thing.
+  const VIRTUALIZE_THRESHOLD=500;
+  const RENDER_WINDOW=500;
+  const RECENTER_BUFFER=150;
+  const [renderRange,setRenderRange]=useState(()=>({start:0,end:lines.length}));
+
+  useEffect(()=>{
+    if(lines.length<=VIRTUALIZE_THRESHOLD){
+      setRenderRange(prev=>(prev.start===0&&prev.end===lines.length)?prev:{start:0,end:lines.length});
+      return;
+    }
+    setRenderRange(prev=>{
+      const needsRecenter=curLine<prev.start+RECENTER_BUFFER||curLine>prev.end-RECENTER_BUFFER||prev.end>lines.length;
+      if(!needsRecenter) return prev;
+      const half=RENDER_WINDOW/2;
+      const start=Math.max(0,Math.min(curLine-half,lines.length-RENDER_WINDOW));
+      const end=Math.min(lines.length,start+RENDER_WINDOW);
+      return{start:Math.max(0,start),end};
+    });
+  },[curLine,lines.length]);
+
+  const estimateHeightRange=(a,b)=>{
+    let sum=0;
+    for(let i=a;i<b;i++) sum+=lineHeights.current[i]||28;
+    return sum;
+  };
+
+  // Recenter on scroll position too — someone just reading/scrolling
+  // through a long script with the mouse wheel, without clicking or
+  // typing anywhere, would otherwise never move curLine and could scroll
+  // past the rendered window into blank spacer space.
+  useEffect(()=>{
+    if(lines.length<=VIRTUALIZE_THRESHOLD) return;
+    const el=containerRef.current;
+    if(!el) return;
+    let ticking=false;
+    const onScroll=()=>{
+      if(ticking) return;
+      ticking=true;
+      requestAnimationFrame(()=>{
+        ticking=false;
+        const scrollTop=el.scrollTop;
+        let acc=0,estIdx=0;
+        for(let i=0;i<lines.length;i++){
+          acc+=lineHeights.current[i]||28;
+          if(acc>=scrollTop){estIdx=i;break;}
+        }
+        setRenderRange(prev=>{
+          const needsRecenter=estIdx<prev.start+RECENTER_BUFFER||estIdx>prev.end-RECENTER_BUFFER;
+          if(!needsRecenter) return prev;
+          const half=RENDER_WINDOW/2;
+          const start=Math.max(0,Math.min(estIdx-half,lines.length-RENDER_WINDOW));
+          const end=Math.min(lines.length,start+RENDER_WINDOW);
+          return{start:Math.max(0,start),end};
+        });
+      });
+    };
+    el.addEventListener("scroll",onScroll);
+    return()=>el.removeEventListener("scroll",onScroll);
+  },[lines.length]);
 
   const computePageMap=useCallback((lns)=>{
     const breakSet=new Set(),lineToPage={};
@@ -555,6 +726,7 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
     setLines(next);
     next.forEach((l,i)=>{textCache.current[i]=l.text;});
     setCurLine(0);
+    setRenderRange({start:0,end:next.length>VIRTUALIZE_THRESHOLD?RENDER_WINDOW:next.length});
     lineHeights.current={};
     pageMapRef.current=computePageMap(next);
     history.current=[{lines:next.map(l=>({...l})),texts:Object.fromEntries(next.map((l,i)=>[i,l.text]))}];
@@ -564,15 +736,36 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
 
   // ── SCROLL-TO-LINE ────────────────────────────────────────────────────────
   const containerRef=useRef(null);
+  const pendingScrollRef=useRef(null);
   useEffect(()=>{
     if(scrollRef){
       scrollRef.current=(idx)=>{
-        const el=wrapperRefs.current[idx];
-        if(el) el.scrollIntoView({behavior:"smooth",block:"center"});
-        refs.current[idx]?.focus();
+        // Bug fix: this used to look up wrapperRefs/refs for idx directly,
+        // which only exist if that line happens to already be mounted. In
+        // a virtualized long script, jumping to a line far outside the
+        // current render window (e.g. a Scene/Cast/Page-Overview jump to
+        // page 90 while viewing page 2) would silently do nothing, since
+        // that line's DOM node doesn't exist yet. Now it moves curLine
+        // first (which expands the render window to include idx via the
+        // effect below), and the actual scroll/focus happens once that
+        // line is really mounted.
+        pendingScrollRef.current=idx;
+        setCurLine(idx);
       };
     }
   },[scrollRef]);
+
+  useEffect(()=>{
+    const idx=pendingScrollRef.current;
+    if(idx==null) return;
+    if(idx<renderRange.start||idx>=renderRange.end) return; // not mounted yet — wait for the window to expand
+    pendingScrollRef.current=null;
+    requestAnimationFrame(()=>{
+      const el=wrapperRefs.current[idx];
+      if(el) el.scrollIntoView({behavior:"smooth",block:"center"});
+      refs.current[idx]?.focus();
+    });
+  },[renderRange,curLine]);
 
   // ── POST-MOUNT HEIGHT MEASUREMENT ─────────────────────────────────────────
   useEffect(()=>{
@@ -1014,7 +1207,9 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
         boxShadow:darkCanvas?"0 0 60px rgba(0,0,0,0.55)":"0 2px 16px rgba(0,0,0,0.18)",transition:"background 0.25s ease,box-shadow 0.25s ease"}}>
         <div style={{height:96}}/>
         <div style={{padding:"0 96px"}}>
-          {lines.map((line,idx)=>{
+          {renderRange.start>0&&<div style={{height:estimateHeightRange(0,renderRange.start)}}/>}
+          {lines.slice(renderRange.start,renderRange.end).map((line,_i)=>{
+            const idx=renderRange.start+_i;
             const isBreakBefore=pageMap.breakSet.has(idx);
             const pageNum=pageMap.lineToPage[idx]||1;
             return(
@@ -1040,8 +1235,18 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
                         onMouseEnter={e=>{
                           const preview=document.getElementById("char-preview-global");
                           const rect=e.currentTarget.getBoundingClientRect();
-                          if(preview){preview.src=charData.image;preview.style.display="block";
-                            preview.style.top=(rect.top-60)+"px";preview.style.left=(rect.left-120)+"px";}
+                          if(!preview) return;
+                          preview.style.top=(rect.top-60)+"px";preview.style.left=(rect.left-120)+"px";
+                          if(isMediaKey(charData.image)){
+                            MediaStore.get(charData.image).then(blob=>{
+                              if(!blob) return;
+                              if(preview.dataset.blobUrl) URL.revokeObjectURL(preview.dataset.blobUrl);
+                              const u=URL.createObjectURL(blob);
+                              preview.dataset.blobUrl=u;preview.src=u;preview.style.display="block";
+                            });
+                          }else{
+                            preview.src=charData.image;preview.style.display="block";
+                          }
                         }}
                         onMouseLeave={()=>{
                           const preview=document.getElementById("char-preview-global");
@@ -1098,6 +1303,7 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
               </div>
             );
           })}
+          {renderRange.end<lines.length&&<div style={{height:estimateHeightRange(renderRange.end,lines.length)}}/>}
         </div>
         <div style={{height:96}}/>
       </div>
@@ -1264,8 +1470,13 @@ function CastPanel({cast,lines,onUpdate,onAdd,onDelete,onClose,onJumpTo}){
   const handleDone=()=>{setSaved(true);setTimeout(()=>{setSaved(false);onClose();},600);};
   const handleImageChange=(e)=>{
     const file=e.target.files?.[0];if(!file) return;
-    const reader=new FileReader();reader.onload=(ev)=>upd("image",ev.target.result);
-    reader.readAsDataURL(file);e.target.value="";
+    const oldKey=isMediaKey(cast[sel]?.image)?cast[sel].image:null;
+    const key=genMediaKey();
+    MediaStore.set(key,file).then(()=>{
+      upd("image",key);
+      if(oldKey) MediaStore.delete(oldKey).catch(()=>{});
+    });
+    e.target.value="";
   };
   const filtered=cast.filter(c=>(c.name||"").toLowerCase().includes(search.toLowerCase()));
   const toggleChecked=(id)=>setChecked(prev=>{const next=new Set(prev);if(next.has(id))next.delete(id);else next.add(id);return next;});
@@ -1321,7 +1532,7 @@ function CastPanel({cast,lines,onUpdate,onAdd,onDelete,onClose,onJumpTo}){
               {mode==="dialogue"&&<input type="checkbox" checked={checked.has(c.id)} onChange={()=>toggleChecked(c.id)} style={{marginLeft:12,cursor:"pointer"}}/>}
               <button onClick={()=>setSel(i)} style={{flex:1,padding:"10px 14px",background:"none",border:"none",cursor:"pointer",textAlign:"left",fontFamily:"inherit",display:"flex",alignItems:"center",gap:8,minWidth:0}}>
                 <div style={{width:28,height:28,borderRadius:"50%",flexShrink:0,background:c.image?"none":"#EBEBEB",border:"1px solid #E0E0E0",overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                  {c.image?<img src={c.image} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{fontSize:10,fontWeight:700,color:"#AAA"}}>{c.name?.[0]?.toUpperCase()||"?"}</span>}
+                  {c.image?<MediaImage src={c.image} style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{fontSize:10,fontWeight:700,color:"#AAA"}}>{c.name?.[0]?.toUpperCase()||"?"}</span>}
                 </div>
                 <div style={{overflow:"hidden",flex:1}}>
                   <p style={{margin:0,fontSize:12,fontWeight:i===sel?700:500,color:i===sel?"#000":"#666",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.name}</p>
@@ -1355,12 +1566,12 @@ function CastPanel({cast,lines,onUpdate,onAdd,onDelete,onClose,onJumpTo}){
         <div style={{flex:1,overflowY:"auto",padding:"20px 18px 52px",display:"flex",flexDirection:"column"}}>
           <div style={{display:"flex",alignItems:"flex-end",gap:14,marginBottom:18}}>
             <div style={{width:72,height:72,borderRadius:8,flexShrink:0,background:cur.image?"none":"#F4F4F4",border:"1px solid #E8E8E8",overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center"}}>
-              {cur.image?<img src={cur.image} alt={cur.name} style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{fontSize:22,color:"#CCC"}}>◉</span>}
+              {cur.image?<MediaImage src={cur.image} alt={cur.name} style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{fontSize:22,color:"#CCC"}}>◉</span>}
             </div>
             <div style={{display:"flex",flexDirection:"column",gap:6}}>
               <input ref={imgInputRef} type="file" accept="image/*" style={{display:"none"}} onChange={handleImageChange}/>
               <button onClick={()=>imgInputRef.current?.click()} style={{padding:"6px 12px",background:"none",border:"1px solid #D0D0D0",borderRadius:4,fontSize:11,fontWeight:600,color:"#555",cursor:"pointer",fontFamily:"inherit"}}>{cur.image?"Change photo":"Upload photo"}</button>
-              {cur.image&&<button onClick={()=>upd("image",null)} style={{padding:"4px 12px",background:"none",border:"none",fontSize:11,color:"#AAA",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>Remove</button>}
+              {cur.image&&<button onClick={()=>{if(isMediaKey(cur.image))MediaStore.delete(cur.image).catch(()=>{});upd("image",null);}} style={{padding:"4px 12px",background:"none",border:"none",fontSize:11,color:"#AAA",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>Remove</button>}
             </div>
           </div>
           <input value={cur.name||""} onChange={e=>upd("name",e.target.value)}
@@ -2602,7 +2813,7 @@ function CharacterContextPanel({cast,currentCharName,onClose}){
         ):(
           <>
             <div style={{width:"100%",aspectRatio:"1",borderRadius:6,overflow:"hidden",background:"#EBEBEB",marginBottom:12,display:"flex",alignItems:"center",justifyContent:"center"}}>
-              {char.image?<img src={char.image} alt={char.name} style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{fontSize:32,color:"#CCC",fontWeight:700}}>{char.name[0]}</span>}
+              {char.image?<MediaImage src={char.image} alt={char.name} style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{fontSize:32,color:"#CCC",fontWeight:700}}>{char.name[0]}</span>}
             </div>
             <p style={{margin:"0 0 2px",fontSize:13,fontWeight:800,color:"#000"}}>{char.name}</p>
             <p style={{margin:"0 0 14px",fontSize:11,color:"#AAA"}}>{char.role}</p>
@@ -2623,9 +2834,9 @@ function SceneGallery({project,onUpdate,currentPage}){
   const [form,setForm]=useState({label:"",fromPage:"",toPage:"",image:null});
   const fileRef=useRef(null);
   const save=(updated)=>onUpdate({sceneGallery:updated});
-  const handleImage=(e)=>{const file=e.target.files?.[0];if(!file)return;const reader=new FileReader();reader.onload=ev=>setForm(f=>({...f,image:ev.target.result}));reader.readAsDataURL(file);e.target.value="";};
+  const handleImage=(e)=>{const file=e.target.files?.[0];if(!file)return;const key=genMediaKey();MediaStore.set(key,file).then(()=>setForm(f=>({...f,image:key})));e.target.value="";};
   const addScene=()=>{if(!form.fromPage||!form.toPage||!form.image)return;const entry={id:Date.now(),label:form.label||`p.${form.fromPage}–${form.toPage}`,fromPage:parseInt(form.fromPage),toPage:parseInt(form.toPage),image:form.image};save([...scenes,entry]);setForm({label:"",fromPage:"",toPage:"",image:null});setAdding(false);};
-  const deleteScene=(id)=>save(scenes.filter(s=>s.id!==id));
+  const deleteScene=(id)=>{const s=scenes.find(x=>x.id===id);if(s&&isMediaKey(s.image))MediaStore.delete(s.image).catch(()=>{});save(scenes.filter(s=>s.id!==id));};
   const active=scenes.filter(s=>currentPage>=s.fromPage&&currentPage<=s.toPage);
   const inactive=scenes.filter(s=>currentPage<s.fromPage||currentPage>s.toPage);
   return(
@@ -2644,7 +2855,7 @@ function SceneGallery({project,onUpdate,currentPage}){
               <input value={form.toPage} onChange={e=>setForm(f=>({...f,toPage:e.target.value}))} placeholder="To p." type="number" min="1" style={{...css.input,fontSize:11,flex:1}}/>
             </div>
             <div onClick={()=>fileRef.current?.click()} style={{border:"1px dashed #D0D0D0",borderRadius:4,padding:"8px",textAlign:"center",cursor:"pointer",marginBottom:8,background:form.image?"none":"#FAFAFA",overflow:"hidden"}}>
-              {form.image?<img src={form.image} alt="" style={{width:"100%",height:80,objectFit:"cover",borderRadius:3}}/>:<p style={{margin:0,fontSize:11,color:"#BBB"}}>Click to add image</p>}
+              {form.image?<MediaImage src={form.image} style={{width:"100%",height:80,objectFit:"cover",borderRadius:3}}/>:<p style={{margin:0,fontSize:11,color:"#BBB"}}>Click to add image</p>}
             </div>
             <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={handleImage}/>
             <div style={{display:"flex",gap:6}}>
@@ -2658,7 +2869,7 @@ function SceneGallery({project,onUpdate,currentPage}){
             <p style={{margin:"0 0 8px",fontSize:9,fontWeight:800,color:"#000",textTransform:"uppercase"}}>Now — p.{currentPage}</p>
             <div style={{display:"grid",gridTemplateColumns:`repeat(${active.length<=1?1:2},1fr)`,gap:4}}>
               {active.map(s=>(<div key={s.id} style={{position:"relative",borderRadius:4,overflow:"hidden",aspectRatio:"4/3"}}>
-                <img src={s.image} alt={s.label} style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>
+                <MediaImage src={s.image} alt={s.label} style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>
                 <div style={{position:"absolute",bottom:0,left:0,right:0,background:"rgba(0,0,0,0.45)",padding:"3px 6px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                   <span style={{fontSize:9,color:"#FFF",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{s.label}</span>
                   <button onClick={()=>deleteScene(s.id)} style={{background:"none",border:"none",cursor:"pointer",color:"rgba(255,255,255,0.6)",fontSize:11,padding:0,lineHeight:1,marginLeft:4,flexShrink:0}}>×</button>
@@ -2671,7 +2882,7 @@ function SceneGallery({project,onUpdate,currentPage}){
           <div>
             <p style={{margin:"0 0 8px",fontSize:9,fontWeight:800,color:"#CCC",textTransform:"uppercase"}}>All Scenes</p>
             {inactive.map(s=>(<div key={s.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:"1px solid #F0F0F0"}}>
-              <div style={{width:36,height:28,borderRadius:3,overflow:"hidden",flexShrink:0}}><img src={s.image} alt={s.label} style={{width:"100%",height:"100%",objectFit:"cover"}}/></div>
+              <div style={{width:36,height:28,borderRadius:3,overflow:"hidden",flexShrink:0}}><MediaImage src={s.image} alt={s.label} style={{width:"100%",height:"100%",objectFit:"cover"}}/></div>
               <div style={{flex:1,overflow:"hidden"}}><p style={{margin:0,fontSize:11,fontWeight:600,color:"#555",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.label}</p><span style={{fontSize:9,color:"#CCC"}}>p.{s.fromPage}–{s.toPage}</span></div>
               <button onClick={()=>deleteScene(s.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#CCC",fontSize:13,padding:0,flexShrink:0}}>×</button>
             </div>))}
