@@ -2105,6 +2105,25 @@ function extractCueName(text,format){
 
 const CUE_NAME_DENYLIST=new Set(["NARRATOR","VO","V.O.","ANNOUNCER","SFX","MUSIC","DIALOGUE","NARRATION","VOICE OVER"]);
 
+// Explicit inline tags some writers add by hand while drafting for
+// audiobook/novel work — e.g. "...text... - Dialogue", "ELIX - Character",
+// "...text... - Inside Mind Dialogue" for interior monologue. An author's
+// own label is a far stronger signal than any heuristic guess below, so
+// this always wins outright, and the tag itself is stripped from the
+// line's text (it's a classification hint, not something meant to appear
+// in the manuscript or be read aloud in the audiobook). "Inside Mind
+// Dialogue" maps to the existing italic "direction" mode rather than a new
+// mode, to keep interior thought visually distinct from spoken dialogue
+// and regular narration without touching every mode-aware function in the
+// file (styles, exports, shortcuts, etc.) for a 7th category.
+const INLINE_TAG_RE=/\s*[-–—]\s*(inside mind dialogue|chapter|character|dialogue|action|note|direction)\s*$/i;
+const INLINE_TAG_MODE={chapter:"location",character:"character",dialogue:"dialogue","inside mind dialogue":"direction",action:"action",note:"note",direction:"direction"};
+function stripInlineTag(t){
+  const m=t.match(INLINE_TAG_RE);
+  if(!m) return null;
+  return {mode:INLINE_TAG_MODE[m[1].toLowerCase()],text:t.slice(0,m.index).trim()};
+}
+
 // Groups classified lines into blocks (continuation lines of the same mode
 // merge, joined by \n) — same "block" concept the AI classifier used.
 function classifyScriptText(rawText,format){
@@ -2123,11 +2142,18 @@ function classifyScriptText(rawText,format){
     // reliably detected on its own line, so preserve it across the blank
     // gap; every other mode still resets to the safe "action" default.
     if(trimmed.length===0){flush();if(lastRealMode!=="character")lastRealMode="action";continue;}
-    let mode=classifyScriptLine(trimmed,format);
-    if(mode===null) mode=(lastRealMode==="character"||lastRealMode==="dialogue")?"dialogue":"action";
+    const tagged=stripInlineTag(trimmed);
+    let mode,lineText;
+    if(tagged){
+      mode=tagged.mode;lineText=tagged.text;
+    }else{
+      mode=classifyScriptLine(trimmed,format);
+      if(mode===null) mode=(lastRealMode==="character"||lastRealMode==="dialogue")?"dialogue":"action";
+      lineText=trimmed;
+    }
     lastRealMode=mode;
-    if(current&&current.mode===mode) current.lines.push(trimmed);
-    else{flush();current={mode,lines:[trimmed]};}
+    if(current&&current.mode===mode) current.lines.push(lineText);
+    else{flush();current={mode,lines:[lineText]};}
   }
   flush();
   return blocks;
