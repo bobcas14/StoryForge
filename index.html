@@ -256,7 +256,10 @@ function PageBreakDivider({pageNum,title,format}){
 function TitlePage({project,profile,onEdit,format}){
   const isNovel=format==="novel"||format==="audiobook";
   const title=(project?.title||"UNTITLED").toUpperCase();
-  const author=profile?.name||"";
+  // Per-project byline — falls back to the profile name only until a
+  // project has its own writtenBy set, so renaming the profile can't
+  // retroactively change what an existing script displays.
+  const author=project?.writtenBy||profile?.name||"";
   const company=profile?.company||"";
   const address=profile?.address||"";
   const phone=profile?.phone||"";
@@ -304,6 +307,7 @@ function TitlePage({project,profile,onEdit,format}){
 function TitlePageEditor({project,profile,onSave,onClose}){
   const [form,setForm]=useState({
     title:project?.title||"",draft:project?.draft||"",
+    writtenBy:project?.writtenBy||profile?.name||"",
     company:profile?.company||"",address:profile?.address||"",
     phone:profile?.phone||"",email:profile?.email||"",
   });
@@ -318,6 +322,7 @@ function TitlePageEditor({project,profile,onSave,onClose}){
         </div>
         <div style={{padding:24,display:"flex",flexDirection:"column",gap:14,maxHeight:"70vh",overflowY:"auto"}}>
           <div><label style={css.label}>Script / Book Title</label><input value={form.title} onChange={e=>upd("title",e.target.value)} style={css.input}/></div>
+          <div><label style={css.label}>Written By</label><input value={form.writtenBy} onChange={e=>upd("writtenBy",e.target.value)} placeholder="Author Name" style={css.input}/></div>
           <div><label style={css.label}>Draft (optional)</label><input value={form.draft} onChange={e=>upd("draft",e.target.value)} placeholder="e.g. Second Draft — June 2025" style={css.input}/></div>
           <div style={{borderTop:"1px solid #EBEBEB",paddingTop:14}}>
             <p style={{margin:"0 0 12px",fontSize:11,fontWeight:700,color:"#AAA",textTransform:"uppercase",letterSpacing:"0.1em"}}>Contact Info</p>
@@ -339,7 +344,7 @@ function TitlePageEditor({project,profile,onSave,onClose}){
 }
 
 // ─── SMART EDITOR ─────────────────────────────────────────────────────────────
-function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageChange,focusMode,scrollRef,darkCanvas,onCharFocus,profile,onEditTitlePage}){
+function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageChange,focusMode,scrollRef,darkCanvas,onCharFocus,profile,onEditTitlePage,onForceSave,flushRef}){
   const [lines,setLines]=useState(()=>
     project?.lines?.length?project.lines:[{id:Date.now(),text:"",mode:"action"}]
   );
@@ -471,6 +476,28 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
       });
     },300);
   };
+
+  // ── MANUAL / EMERGENCY FLUSH ───────────────────────────────────────────────
+  // Normal typing only reaches localStorage ~300ms after you stop typing
+  // (the debounce above). That gap is where an unexpected browser close can
+  // lose the last few keystrokes. flushRef exposes a synchronous escape
+  // hatch — used by Ctrl/Cmd+S, the manual Save button, and a
+  // `beforeunload` listener up in App — that reads straight out of the
+  // uncontrolled textareas' live cache and pushes it out immediately,
+  // bypassing the debounce entirely.
+  useEffect(()=>{
+    if(!flushRef) return;
+    flushRef.current=()=>{
+      clearTimeout(syncTimerRef.current);
+      const updated=lines.map((l,i)=>({...l,text:textCache.current[i]??l.text}));
+      captureSnapshot(updated,{...textCache.current});
+      onUpdateContent(updated);
+      if(onForceSave) onForceSave(updated);
+      pageMapRef.current=computePageMap(updated);
+      setLines(updated);
+    };
+    return()=>{if(flushRef) flushRef.current=null;};
+  },[flushRef,lines,onForceSave]);
 
   const showPill=(el)=>{
     if(!el) return;
@@ -1555,7 +1582,14 @@ function classifyScriptText(rawText,format){
   const flush=()=>{if(current&&current.lines.length>0) blocks.push({text:current.lines.join("\n"),mode:current.mode});current=null;};
   for(const raw of rawLines){
     const trimmed=raw.replace(/[ \t]+/g," ").trim();
-    if(trimmed.length===0){flush();lastRealMode="action";continue;}
+    // DOCX extraction (mammoth) inserts a blank line after EVERY paragraph,
+    // not just at real section breaks. Resetting to "action" on every blank
+    // line was wiping the "character" signal before the very next paragraph
+    // (the character's dialogue) got classified — that's what caused
+    // dialogue to fall through and get tagged as action. A character cue is
+    // reliably detected on its own line, so preserve it across the blank
+    // gap; every other mode still resets to the safe "action" default.
+    if(trimmed.length===0){flush();if(lastRealMode!=="character")lastRealMode="action";continue;}
     let mode=classifyScriptLine(trimmed,format);
     if(mode===null) mode=(lastRealMode==="character"||lastRealMode==="dialogue")?"dialogue":"action";
     lastRealMode=mode;
@@ -2035,9 +2069,18 @@ const NAV_ITEMS=[
   {id:"notes",icon:"≡",label:"Notes"},{id:"profile",icon:"◎",label:"Profile"},
 ];
 
-function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,onSaveProject,onBackToDash,user,onSignOut}){
+function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initialProjects,onSaveProject,onBackToDash,user,onSignOut}){
   const [nav,setNav]=useState("write");
-  const [projects,setProjects]=useState(()=>initialProject?[initialProject]:LS.get("sf_projects",[]));
+  // Bug fix: this used to seed with just [initialProject], so App never
+  // knew about the user's other scripts — the project switcher had nothing
+  // to show, and any project created from inside the writing view (the
+  // sidebar "+" or "+ New project") wasn't in the persisted list yet, so it
+  // silently failed to save (see onSaveProject upsert fix in Root below).
+  const [projects,setProjects]=useState(()=>{
+    if(initialProjects&&initialProjects.length) return initialProjects;
+    if(initialProject) return [initialProject];
+    return LS.get("sf_projects",[]);
+  });
   const [activeId,setActiveId]=useState(()=>initialProject?.id||null);
   const [aiOpen,setAiOpen]=useState(false);
   const [castOpen,setCastOpen]=useState(false);
@@ -2075,6 +2118,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,onSave
       if(e.key==="f"){e.preventDefault();setFocusMode(o=>!o);}
       if(e.key==="m"){e.preventDefault();setSceneNavCollapsed(o=>!o);}
       if(e.key==="/"){e.preventDefault();setShortcutsOpen(o=>!o);}
+      if(e.key==="s"){e.preventDefault();flushRef.current?.();}
     };
     const closeMenu=(e)=>{if(userMenuOpen) setUserMenuOpen(false);};
     window.addEventListener("keydown",handler);
@@ -2111,6 +2155,25 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,onSave
   const jumpToLine=(idx)=>{if(sceneNavRef.current)sceneNavRef.current(idx);};
   const fmtLastSaved=()=>{if(!lastSaved)return"Not saved";const sec=Math.floor((Date.now()-lastSaved)/1000);if(sec<60)return"Just now";return`${Math.floor(sec/60)}m ago`;};
 
+  // ── MANUAL / EMERGENCY SAVE ────────────────────────────────────────────────
+  const flushRef=useRef(null);
+  // Bypasses React state entirely — writes straight to localStorage via the
+  // same onSaveProject Root already uses, so it still works even if this
+  // runs during a 'beforeunload' teardown where scheduled state updates
+  // aren't guaranteed to run before the tab actually closes.
+  const forceSaveNow=(updatedLines)=>{
+    if(!active) return;
+    const updated={...active,lines:updatedLines};
+    if(onSaveProject) onSaveProject(updated);
+    setLastSaved(new Date());
+  };
+  const manualSave=()=>{flushRef.current?.();};
+  useEffect(()=>{
+    const onBeforeUnload=()=>{flushRef.current?.();};
+    window.addEventListener("beforeunload",onBeforeUnload);
+    return()=>window.removeEventListener("beforeunload",onBeforeUnload);
+  },[]);
+
   return(
     <div style={{height:"100vh",display:"flex",background:"#FFF",color:"#0A0A0A",fontFamily:"-apple-system,'Segoe UI',sans-serif",overflow:"hidden"}}>
       {focusMode&&(
@@ -2123,7 +2186,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,onSave
             </div>
           </div>
           <div style={{flex:1,overflow:"hidden"}}>
-            {active&&<SmartEditor project={active} cast={cast} onUpdateContent={updateLines} onAddCharacter={addCharacter} format={active.format} onPageChange={(cur,total)=>setPageInfo({cur,total})} focusMode={true} scrollRef={sceneNavRef} profile={profile} onEditTitlePage={()=>setTitlePageEditorOpen(true)}/>}
+            {active&&<SmartEditor project={active} cast={cast} onUpdateContent={updateLines} onAddCharacter={addCharacter} format={active.format} onPageChange={(cur,total)=>setPageInfo({cur,total})} focusMode={true} scrollRef={sceneNavRef} profile={profile} onEditTitlePage={()=>setTitlePageEditorOpen(true)} onForceSave={forceSaveNow} flushRef={flushRef}/>}
           </div>
         </div>
       )}
@@ -2228,7 +2291,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,onSave
         <div style={{flex:1,overflow:"hidden",display:"flex",minWidth:0}}>
           {nav==="write"&&(
             active?(
-              <SmartEditor project={active} cast={cast} onUpdateContent={updateLines} onAddCharacter={addCharacter} format={active.format} onPageChange={(cur,total)=>setPageInfo({cur,total})} focusMode={focusMode} scrollRef={sceneNavRef} darkCanvas={darkCanvas} onCharFocus={setCurrentCharName} key={active?.id} profile={profile} onEditTitlePage={()=>setTitlePageEditorOpen(true)}/>
+              <SmartEditor project={active} cast={cast} onUpdateContent={updateLines} onAddCharacter={addCharacter} format={active.format} onPageChange={(cur,total)=>setPageInfo({cur,total})} focusMode={focusMode} scrollRef={sceneNavRef} darkCanvas={darkCanvas} onCharFocus={setCurrentCharName} key={active?.id} profile={profile} onEditTitlePage={()=>setTitlePageEditorOpen(true)} onForceSave={forceSaveNow} flushRef={flushRef}/>
             ):(
               <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16}}>
                 <p style={{fontSize:16,color:"#AAA"}}>No project open</p>
@@ -2296,7 +2359,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,onSave
         {titlePageEditorOpen&&active&&(
           <TitlePageEditor project={active} profile={profile}
             onSave={(form)=>{
-              updateProject(active.id,{title:form.title,draft:form.draft});
+              updateProject(active.id,{title:form.title,draft:form.draft,writtenBy:form.writtenBy});
               const profileChanges={company:form.company,address:form.address,phone:form.phone,email:form.email};
               if(onUpdateProfile) onUpdateProfile(profileChanges);
               else LS.set("sf_profile",{...profile,...profileChanges});
@@ -2313,6 +2376,8 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,onSave
               <span style={{fontSize:10,color:"#AAA"}}>{wordCount.toLocaleString()} words</span>
               <span style={{margin:"0 10px",color:"#DDD"}}>|</span>
               <span style={{fontSize:10,color:"#AAA"}}>{lastSaved?`Saved ${fmtLastSaved()}`:"Auto-saves as you type"}</span>
+              <span style={{margin:"0 10px",color:"#DDD"}}>|</span>
+              <button onClick={manualSave} title="Ctrl/Cmd+S" style={{background:"none",border:"1px solid #E0E0E0",borderRadius:3,padding:"2px 8px",fontSize:10,cursor:"pointer",color:"#888",fontFamily:"inherit"}}>Save</button>
             </>
           ):(
             <span style={{fontSize:10,color:"#CCC",fontStyle:"italic"}}>Tab · Enter · Esc · ⌘K</span>
@@ -2389,15 +2454,20 @@ function Root(){
     onUpdateProfile={updateProfile}
     onHome={()=>setScreen("dashboard")}
     initialProject={activeProject}
+    initialProjects={dashProjects}
     user={user}
     onSignOut={signOut}
     onSaveProject={(updated)=>{
-      if(!user||!dashSave) return;
+      if(!user) return;
       const projectsKey=`sf_projects_${user.email}`;
       const allProjects=LS.get(projectsKey,[]);
-      // Only update if project still exists — never re-add a deleted project
-      if(!allProjects.find(p=>p.id===updated.id)) return;
-      const newAll=allProjects.map(p=>p.id===updated.id?updated:p);
+      // Bug fix: this used to bail out entirely if the project's id wasn't
+      // already in the saved list — which silently dropped brand-new
+      // projects created from inside the writing view (they aren't in the
+      // saved list *yet*, that's not the same as having been deleted).
+      // Upsert instead: update in place if it exists, otherwise add it.
+      const exists=allProjects.some(p=>p.id===updated.id);
+      const newAll=exists?allProjects.map(p=>p.id===updated.id?updated:p):[updated,...allProjects];
       LS.set(projectsKey,newAll);setDashProjects(newAll);
     }}
     onBackToDash={()=>setScreen("dashboard")}
