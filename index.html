@@ -619,6 +619,38 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
     if((e.ctrlKey||e.metaKey)&&e.key!=="k") return;
     if(e.shiftKey&&e.key!=="Tab") return;
 
+    // ── ARROW KEYS: move the cursor, not the page ──────────────────────────
+    // Each line is its own <textarea>, so a plain ArrowUp/Down at the very
+    // top/bottom of one has nowhere left to go inside it. Left unhandled,
+    // the browser's only remaining option is to scroll the nearest
+    // scrollable ancestor (the editor viewport) into view instead of moving
+    // the caret — that's the "arrow keys scroll the page" bug. We only take
+    // over at the start/end boundary of a line's text; anywhere in the
+    // middle (including wrapped rows within one block) native textarea
+    // behavior already moves the caret correctly, so we leave it alone.
+    if(!popup.visible&&(e.key==="ArrowUp"||e.key==="ArrowDown"||e.key==="ArrowLeft"||e.key==="ArrowRight")){
+      const el=refs.current[idx];
+      if(el){
+        const atStart=el.selectionStart===0&&el.selectionEnd===0;
+        const atEnd=el.selectionStart===el.value.length&&el.selectionEnd===el.value.length;
+        if((e.key==="ArrowUp"||e.key==="ArrowLeft")&&atStart&&idx>0){
+          e.preventDefault();
+          setCurLine(idx-1);
+          focusLine(idx-1,true);
+          return;
+        }
+        if((e.key==="ArrowDown"||e.key==="ArrowRight")&&atEnd&&idx<lines.length-1){
+          e.preventDefault();
+          setCurLine(idx+1);
+          setTimeout(()=>{
+            const nextEl=refs.current[idx+1];
+            if(nextEl){nextEl.focus();nextEl.setSelectionRange(0,0);}
+          },0);
+          return;
+        }
+      }
+    }
+
     if(e.key==="Tab"&&!popup.visible){
       e.preventDefault();
       const ci=cycle.indexOf(lineMode);
@@ -1144,9 +1176,18 @@ function LandingNavBar({section,goSection,onStart,onSignIn,user}){
         {[["features","Features"],["formats","Formats"],["pricing","Pricing"]].map(([id,label])=>(
           <button key={id} onClick={()=>goSection(id)} style={{background:"none",border:"none",cursor:"pointer",fontSize:13,fontFamily:"inherit",color:section===id?"#000":"#888",fontWeight:section===id?700:400,borderBottom:`1px solid ${section===id?"#000":"transparent"}`,paddingBottom:2}}>{label}</button>
         ))}
-        {user?(
-          <button onClick={onStart} style={{padding:"8px 20px",background:"#000",color:"#FFF",border:"none",borderRadius:4,cursor:"pointer",fontSize:13,fontWeight:700,fontFamily:"inherit"}}>Open App</button>
-        ):(
+        {user?(()=>{
+          const initials=(user.name||"?").trim().split(/\s+/).map(w=>w[0]?.toUpperCase()||"").slice(0,2).join("");
+          return(
+            <div style={{display:"flex",gap:12,alignItems:"center"}}>
+              <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                <div style={{width:24,height:24,borderRadius:"50%",background:"#000",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:800,color:"#FFF",flexShrink:0}}>{initials}</div>
+                <span style={{fontSize:12,color:"#888"}}>{user.name}</span>
+              </div>
+              <button onClick={onStart} style={{padding:"8px 20px",background:"#000",color:"#FFF",border:"none",borderRadius:4,cursor:"pointer",fontSize:13,fontWeight:700,fontFamily:"inherit"}}>Open App</button>
+            </div>
+          );
+        })():(
           <div style={{display:"flex",gap:8}}>
             <button onClick={onSignIn} style={{padding:"8px 20px",background:"none",color:"#000",border:"1px solid #D0D0D0",borderRadius:4,cursor:"pointer",fontSize:13,fontWeight:600,fontFamily:"inherit"}}>Sign In</button>
             <button onClick={onStart} style={{padding:"8px 20px",background:"#000",color:"#FFF",border:"none",borderRadius:4,cursor:"pointer",fontSize:13,fontWeight:700,fontFamily:"inherit"}}>Sign Up</button>
@@ -1797,22 +1838,25 @@ function ImportModal({profile,onImport,onClose}){
   );
 }
 
-function NotesPanel({notes,onChange}){
-  const [full,setFull]=useState(false);
-  if(full) return(
-    <div style={{position:"fixed",inset:0,zIndex:800,background:"#FFF",display:"flex",flexDirection:"column"}}>
-      <div style={{padding:"12px 20px",borderBottom:"1px solid #EBEBEB",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
-        <span style={{fontSize:10,fontWeight:800,color:"#AAA",letterSpacing:"0.12em",textTransform:"uppercase"}}>Notes</span>
-        <button onClick={()=>setFull(false)} style={{background:"none",border:"none",cursor:"pointer",color:"#BBB",fontSize:14}}>⊡</button>
-      </div>
-      <textarea value={notes} onChange={e=>onChange(e.target.value)} placeholder="Lore rules, story notes, continuity tracking..." style={{flex:1,background:"#FFF",border:"none",color:"#333",padding:"48px 80px",fontSize:14,lineHeight:1.9,fontFamily:"-apple-system,'Segoe UI',sans-serif",resize:"none",outline:"none"}}/>
+function NotesPanel({notes,onChange,onClose}){
+  const [collapsed,setCollapsed]=useState(false);
+  // Bug fix: this used to have a "fullscreen" mode (position:fixed,inset:0)
+  // that covered the entire viewport — Notes should only ever be a sidebar.
+  // Collapsing now just narrows it to a thin strip instead of hiding the
+  // editor behind it.
+  if(collapsed) return(
+    <div style={{width:32,minWidth:32,borderLeft:"1px solid #EBEBEB",display:"flex",flexDirection:"column",alignItems:"center",background:"#FFF",flexShrink:0,paddingTop:14}}>
+      <button onClick={()=>setCollapsed(false)} title="Expand notes" style={{background:"none",border:"none",cursor:"pointer",color:"#AAA",fontSize:10,fontWeight:800,letterSpacing:"0.1em",writingMode:"vertical-lr",textOrientation:"mixed",padding:0}}>NOTES</button>
     </div>
   );
   return(
     <div style={{width:280,minWidth:280,borderLeft:"1px solid #EBEBEB",display:"flex",flexDirection:"column",background:"#FFF",flexShrink:0,overflow:"hidden"}}>
       <div style={{padding:"12px 16px",borderBottom:"1px solid #EBEBEB",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
         <span style={{fontSize:10,fontWeight:800,color:"#AAA",letterSpacing:"0.12em",textTransform:"uppercase"}}>Notes</span>
-        <button onClick={()=>setFull(true)} style={{background:"none",border:"none",cursor:"pointer",color:"#BBB",fontSize:14}}>⛶</button>
+        <div style={{display:"flex",gap:12,alignItems:"center"}}>
+          <button onClick={()=>setCollapsed(true)} title="Collapse" style={{background:"none",border:"none",cursor:"pointer",color:"#BBB",fontSize:13,padding:0}}>⛝</button>
+          {onClose&&<button onClick={onClose} title="Close" style={{background:"none",border:"none",cursor:"pointer",color:"#CCC",fontSize:16,lineHeight:1,padding:0}}>×</button>}
+        </div>
       </div>
       <textarea value={notes} onChange={e=>onChange(e.target.value)} placeholder="Lore rules, story notes, continuity tracking..." style={{flex:1,background:"#FFF",border:"none",color:"#333",padding:"14px 16px",fontSize:12,lineHeight:1.8,fontFamily:"-apple-system,'Segoe UI',sans-serif",resize:"none",outline:"none"}}/>
     </div>
@@ -2084,6 +2128,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
   const [activeId,setActiveId]=useState(()=>initialProject?.id||null);
   const [aiOpen,setAiOpen]=useState(false);
   const [castOpen,setCastOpen]=useState(false);
+  const [notesOpen,setNotesOpen]=useState(false);
   const [hoveredNav,setHoveredNav]=useState(null);
   const [pageInfo,setPageInfo]=useState({cur:1,total:1});
   const [importOpen,setImportOpen]=useState(false);
@@ -2093,6 +2138,14 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
   const [showFormatGuide,setShowFormatGuide]=useState(false);
   const [wordCount,setWordCount]=useState(0);
   const [lastSaved,setLastSaved]=useState(null);
+  const [saveToast,setSaveToast]=useState(false);
+  const saveToastTimerRef=useRef(null);
+  const flashSaved=()=>{
+    setLastSaved(new Date());
+    setSaveToast(true);
+    clearTimeout(saveToastTimerRef.current);
+    saveToastTimerRef.current=setTimeout(()=>setSaveToast(false),2000);
+  };
   const [projectMenuOpen,setProjectMenuOpen]=useState(false);
   const [darkCanvas,setDarkCanvas]=useState(false);
   const [galleryOpen,setGalleryOpen]=useState(false);
@@ -2137,7 +2190,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
   };
 
   const updateProject=(id,changes)=>setProjects(prev=>prev.map(p=>p.id===id?{...p,...changes}:p));
-  const updateLines=(lines)=>{if(active){updateProject(active.id,{lines});setLastSaved(new Date());}};
+  const updateLines=(lines)=>{if(active){updateProject(active.id,{lines});flashSaved();}};
   const updateNotes=(notes)=>{if(active)updateProject(active.id,{notes});};
   const addCharacter=(char)=>{if(!active)return;const exists=active.cast?.some(c=>c.name.toUpperCase()===char.name.toUpperCase());if(!exists)updateProject(active.id,{cast:[...(active.cast||[]),char]});};
   const updateCharacter=(charId,field,val)=>{if(!active)return;updateProject(active.id,{cast:active.cast.map(c=>c.id===charId?{...c,[field]:val}:c)});};
@@ -2165,7 +2218,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
     if(!active) return;
     const updated={...active,lines:updatedLines};
     if(onSaveProject) onSaveProject(updated);
-    setLastSaved(new Date());
+    flashSaved();
   };
   const manualSave=()=>{flushRef.current?.();};
   useEffect(()=>{
@@ -2200,12 +2253,13 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
           {hoveredNav==="home"&&<div style={{position:"absolute",left:44,top:"50%",transform:"translateY(-50%)",background:"#000",color:"#FFF",padding:"4px 10px",borderRadius:4,fontSize:11,fontWeight:700,whiteSpace:"nowrap",pointerEvents:"none",zIndex:700}}>Home</div>}
         </div>
         {NAV_ITEMS.map(item=>{
-          const isActive=item.id==="cast"?castOpen:nav===item.id&&item.id!=="cast";
+          const isActive=item.id==="cast"?castOpen:item.id==="notes"?notesOpen:nav===item.id&&item.id!=="cast"&&item.id!=="notes";
           return(
             <div key={item.id} style={{position:"relative",width:"100%",display:"flex",justifyContent:"center",marginBottom:4}}
               onMouseEnter={()=>setHoveredNav(item.id)} onMouseLeave={()=>setHoveredNav(null)}>
               <button onClick={()=>{
                 if(item.id==="cast"){setCastOpen(o=>!o);}
+                else if(item.id==="notes"){setNotesOpen(o=>!o);}
                 else if(nav===item.id){setNav("write");setCastOpen(false);}
                 else{setNav(item.id);setCastOpen(false);}
               }} style={{width:36,height:36,borderRadius:8,border:"none",background:isActive?"#000":"transparent",color:isActive?"#FFF":"#999",cursor:"pointer",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.12s"}}>{item.icon}</button>
@@ -2300,14 +2354,14 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
             )
           )}
 
-          {(charPanelOpen||galleryOpen)&&nav==="write"&&(
+          {(charPanelOpen||galleryOpen||notesOpen)&&nav==="write"&&(
             <div style={{position:"fixed",top:48,right:0,bottom:32,display:"flex",zIndex:300,boxShadow:"-4px 0 20px rgba(0,0,0,0.08)"}}>
               {charPanelOpen&&<CharacterContextPanel cast={cast} currentCharName={currentCharName} onClose={()=>setCharPanelOpen(false)}/>}
               {galleryOpen&&active&&<SceneGallery project={active} onUpdate={updateSceneGallery} currentPage={pageInfo.cur}/>}
+              {notesOpen&&active&&<NotesPanel notes={active?.notes||""} onChange={updateNotes} onClose={()=>setNotesOpen(false)}/>}
             </div>
           )}
 
-          {nav==="notes"&&<NotesPanel notes={active?.notes||""} onChange={updateNotes}/>}
           {nav==="beats"&&(active?<BeatBoard project={active} onUpdate={updateBeats}/>:<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center"}}><p style={{color:"#CCC",fontSize:13}}>Open a project first.</p></div>)}
           {nav==="mood"&&(active?<MoodBoard project={active} onUpdateCards={updateMoodCards}/>:<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center"}}><p style={{color:"#CCC",fontSize:13}}>Open a project first.</p></div>)}
 
@@ -2392,6 +2446,14 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
 
         {shortcutsOpen&&<ShortcutsOverlay onClose={()=>setShortcutsOpen(false)}/>}
         {showFormatGuide&&active&&<FormatGuide format={active.format} onClose={()=>setShowFormatGuide(false)}/>}
+
+        <div style={{position:"fixed",bottom:44,right:20,zIndex:900,display:"flex",alignItems:"center",gap:6,
+          padding:"7px 14px",background:"#000",color:"#FFF",borderRadius:20,fontSize:11,fontWeight:700,
+          boxShadow:"0 4px 16px rgba(0,0,0,0.18)",pointerEvents:"none",
+          opacity:saveToast?1:0,transform:saveToast?"translateY(0)":"translateY(6px)",
+          transition:"opacity 0.35s ease,transform 0.35s ease"}}>
+          <span>✓</span><span>Saved</span>
+        </div>
       </div>
     </div>
   );
@@ -2399,7 +2461,13 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
 
 // ─── ROOT ─────────────────────────────────────────────────────────────────────
 function Root(){
-  const SESSION_TIMEOUT=30*60*1000;
+  // Bug fix: this was 30 minutes, checked against mouse/keyboard activity —
+  // so stepping away (or just reading/scrolling without touching the
+  // keyboard) for half an hour signed you out mid-session. There's no real
+  // server-side auth here to protect, so "session expiry" should mean a
+  // long real absence, not a short quiet moment. Signing out is otherwise
+  // always explicit (the Sign out button).
+  const SESSION_TIMEOUT=30*24*60*60*1000; // 30 days
   const loadUser=()=>{
     const saved=LS.get("sf_current_user",null);if(!saved) return null;
     const lastActive=LS.get("sf_last_active",0);
