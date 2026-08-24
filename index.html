@@ -73,19 +73,12 @@ const FORMATS = [
 ];
 
 const GENRES = [
-  "Drama","Comedy","Tragicomedy","Satire","Dark Comedy","Romantic Comedy",
-  "Action / Adventure","Thriller","Spy / Espionage","Heist","Legal Thriller","Political Thriller",
-  "Crime","Crime Noir","Crime Drama","Detective","Gangster","True Crime",
-  "Horror","Psychological Horror","Supernatural Horror","Slasher","Body Horror","Gothic",
-  "Sci-Fi","Hard Sci-Fi","Cyberpunk","Space Opera","Dark Fantasy","High Fantasy","Urban Fantasy","Supernatural",
-  "Romance","Romantic Drama","Period Romance",
-  "Mystery / Thriller","Whodunit","Noir",
-  "Historical","Period Drama","War","Epic",
-  "Coming of Age","Family","Kids","Teen Drama","Slice of Life",
-  "Shonen","Shojo","Seinen","Josei","Isekai","Mecha","Martial Arts",
-  "Post-Apocalyptic","Dystopian","Western","Musical","Sports","Biopic",
-  "Political Drama","Social Drama","Religious / Spiritual","Philosophical",
-  "Experimental","Anthology","Docudrama","Mockumentary",
+  "Drama","Comedy","Romantic Comedy","Satire",
+  "Action / Adventure","Thriller","Crime","Mystery",
+  "Horror","Sci-Fi","Fantasy","Supernatural",
+  "Romance","Historical","War","Western",
+  "Coming of Age","Family","Musical","Sports","Biopic",
+  "Political Drama","Anthology",
 ];
 
 const css = {
@@ -1415,10 +1408,13 @@ function AIPanel({project,cast,onClose,onGoToProfile}){
     const map={grammar:"List every grammar, spelling, and punctuation issue.",style:"Identify weak verbs, passive voice. Give rewrites.",dialogue:"Analyze dialogue. Flag anything on-the-nose. Give punchy rewrites.",pacing:"Evaluate pacing. Where does it drag?",continuity:"Find continuity errors.",format:`Check formatting against ${fmt} industry standards.`};
     run(`You are a professional script editor. Format: ${fmt}. Genre: ${genre}. Give specific, actionable notes.`,`${map[corrType]}\n\nSCRIPT:\n${content}`);
   };
-  // Verbatim, per explicit spec — this is a strict format converter, not a
-  // creative tool. It must not reword, embellish, or "improve" anything;
-  // it only restructures screenplay-tagged draft text into flowing novel
-  // prose using the author's own exact words.
+  // Based on the original spec verbatim, with two additions after testing
+  // surfaced real gaps: the original said nothing about chapter headings
+  // (so "- Chapter" tagged lines had no defined handling and got silently
+  // swallowed into prose) or paragraph spacing (so output ran paragraphs
+  // together on single line breaks instead of standard manuscript double-
+  // spacing). Every original rule, including the numbering, is untouched —
+  // rule 8 and the paragraph-spacing sentence are pure additions.
   const CONVERT_SYSTEM_PROMPT=`You are a manuscript format converter. Your ONLY job is to convert screenplay-style
 draft text into standard novel prose. You are NOT a creative rewriter.
 INPUT FORMAT (what you'll receive):
@@ -1427,10 +1423,20 @@ followed by a line or paragraph of narration/description. Example:
 ELIX
 "The sky used to be so blue."
 I think to myself, looking up.
+Some lines are tagged "- Chapter" (e.g. "CHAPTER ONE - Chapter", "Elix - Chapter") —
+these mark chapter/section headings, not narration or dialogue.
 OUTPUT FORMAT (what you must produce):
 Standard novel prose. Dialogue folded inline with its surrounding narration.
 A new paragraph starts whenever the speaker changes. Example:
 "The sky used to be so blue," I think to myself, looking up.
+Separate every paragraph from the next with one full blank line (standard
+manuscript double-spacing) — never run paragraphs together with only a
+single line break.
+A line tagged "- Chapter" becomes its own standalone heading line, with the
+"- Chapter" tag stripped, followed by a blank line before the prose below it
+begins. Never fold a chapter heading into a paragraph of prose, and never
+attach a chapter heading to the dialogue/narration that follows it as if it
+were part of the same paragraph.
 HARD RULES — DO NOT BREAK THESE:
 1. Do not reword, rephrase, or "improve" any sentence. Keep the author's exact
    word choices, sentence structure, and phrasing. You are restructuring
@@ -1439,7 +1445,8 @@ HARD RULES — DO NOT BREAK THESE:
    isn't already in the source text. No embellishment, even if the prose feels
    plain. That is a separate, explicitly-requested task — never do it by default.
 3. Strip name tags (ELIX, CAPTAIN CASTRO, etc.) and stray labels or annotations
-   (e.g. "- Dialogue", "- Character") — these are formatting artifacts, not content.
+   (e.g. "- Dialogue", "- Character", "- Chapter") — these are formatting
+   artifacts, not content.
 4. Merge action/narration lines that describe who is speaking into the same
    paragraph as their dialogue, using minimal necessary connective words only
    (e.g. "he says," "I think to myself") — reuse the author's own tag words
@@ -1451,9 +1458,14 @@ HARD RULES — DO NOT BREAK THESE:
 6. Apply only the specific, explicitly-approved corrections the author has
    given you by name (e.g. a fixed typo, a renamed character) — nothing else.
 7. When in doubt, change less, not more.
+8. Chapter headings (tagged "- Chapter") are never merged into surrounding
+   prose and always get their own blank-line-separated line, per OUTPUT FORMAT
+   above.
 Before returning output, do a self-check: for every sentence in your output,
 could you point to the exact words in the source it came from? If you added
-or changed wording beyond merging structure, undo it.`;
+or changed wording beyond merging structure, undo it. Also check: is every
+paragraph separated by a full blank line, and is every chapter heading on
+its own line rather than folded into prose?`;
   const [convertInput,setConvertInput]=useState(()=>project?.lines?.map(l=>l.text).join("\n")||"");
   const doConvert=()=>{
     if(!convertInput.trim()) return;
