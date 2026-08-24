@@ -1394,7 +1394,7 @@ function AIPanel({project,cast,onClose,onGoToProfile}){
   // not on localhost, not on Vercel (which has /api/chat proxy), and no stored key.
   const isVercel=window.location.hostname.includes("vercel.app")||window.location.hostname.includes("hilltops");
   const needsOwnKey=!isArtifact&&!isLocalDev&&!isVercel&&!localKey;
-  const run=async(sys,usr)=>{
+  const run=async(sys,usr,maxTokens=1000)=>{
     if(needsOwnKey){setResponse("Add your Anthropic API key in Profile → API Key to use AI features.");return;}
     setLoading(true);setResponse("");
     let url,headers;
@@ -1402,7 +1402,7 @@ function AIPanel({project,cast,onClose,onGoToProfile}){
     else if(localKey){url="https://api.anthropic.com/v1/messages";headers={"Content-Type":"application/json","x-api-key":localKey,"anthropic-version":"2023-06-01"};}
     else{url="/api/chat";headers={"Content-Type":"application/json"};}
     try{
-      const res=await fetch(url,{method:"POST",headers,body:JSON.stringify({model:"claude-sonnet-4-5",max_tokens:1000,system:sys,messages:[{role:"user",content:usr}]})});
+      const res=await fetch(url,{method:"POST",headers,body:JSON.stringify({model:"claude-sonnet-4-5",max_tokens:maxTokens,system:sys,messages:[{role:"user",content:usr}]})});
       const d=await parseApiResponse(res);
       if(d.error) setResponse(`API error: ${d.error?.message||JSON.stringify(d.error)}`);
       else if(d.content) setResponse(d.content.filter(b=>b.type==="text").map(b=>b.text).join("")||"No response.");
@@ -1414,6 +1414,50 @@ function AIPanel({project,cast,onClose,onGoToProfile}){
   const doCorrect=()=>{
     const map={grammar:"List every grammar, spelling, and punctuation issue.",style:"Identify weak verbs, passive voice. Give rewrites.",dialogue:"Analyze dialogue. Flag anything on-the-nose. Give punchy rewrites.",pacing:"Evaluate pacing. Where does it drag?",continuity:"Find continuity errors.",format:`Check formatting against ${fmt} industry standards.`};
     run(`You are a professional script editor. Format: ${fmt}. Genre: ${genre}. Give specific, actionable notes.`,`${map[corrType]}\n\nSCRIPT:\n${content}`);
+  };
+  // Verbatim, per explicit spec — this is a strict format converter, not a
+  // creative tool. It must not reword, embellish, or "improve" anything;
+  // it only restructures screenplay-tagged draft text into flowing novel
+  // prose using the author's own exact words.
+  const CONVERT_SYSTEM_PROMPT=`You are a manuscript format converter. Your ONLY job is to convert screenplay-style
+draft text into standard novel prose. You are NOT a creative rewriter.
+INPUT FORMAT (what you'll receive):
+Character name in caps on its own line, followed by a quoted line of dialogue,
+followed by a line or paragraph of narration/description. Example:
+ELIX
+"The sky used to be so blue."
+I think to myself, looking up.
+OUTPUT FORMAT (what you must produce):
+Standard novel prose. Dialogue folded inline with its surrounding narration.
+A new paragraph starts whenever the speaker changes. Example:
+"The sky used to be so blue," I think to myself, looking up.
+HARD RULES — DO NOT BREAK THESE:
+1. Do not reword, rephrase, or "improve" any sentence. Keep the author's exact
+   word choices, sentence structure, and phrasing. You are restructuring
+   FORMAT ONLY, not rewriting content.
+2. Do not add new description, metaphor, sensory detail, humor, or voice that
+   isn't already in the source text. No embellishment, even if the prose feels
+   plain. That is a separate, explicitly-requested task — never do it by default.
+3. Strip name tags (ELIX, CAPTAIN CASTRO, etc.) and stray labels or annotations
+   (e.g. "- Dialogue", "- Character") — these are formatting artifacts, not content.
+4. Merge action/narration lines that describe who is speaking into the same
+   paragraph as their dialogue, using minimal necessary connective words only
+   (e.g. "he says," "I think to myself") — reuse the author's own tag words
+   when the source already has them (e.g. "I think to myself" stays as-is,
+   just repositioned).
+5. If a line in the source is grammatically broken, contradictory, or unclear,
+   do NOT silently fix it. Preserve it exactly and flag it in brackets like:
+   [flag: unclear — original said X] so the author can decide.
+6. Apply only the specific, explicitly-approved corrections the author has
+   given you by name (e.g. a fixed typo, a renamed character) — nothing else.
+7. When in doubt, change less, not more.
+Before returning output, do a self-check: for every sentence in your output,
+could you point to the exact words in the source it came from? If you added
+or changed wording beyond merging structure, undo it.`;
+  const [convertInput,setConvertInput]=useState(()=>project?.lines?.map(l=>l.text).join("\n")||"");
+  const doConvert=()=>{
+    if(!convertInput.trim()) return;
+    run(CONVERT_SYSTEM_PROMPT,convertInput,4096);
   };
   return(
     <div style={{position:"fixed",right:0,top:0,bottom:0,width:340,background:"#FFF",borderLeft:"1px solid #E8E8E8",display:"flex",flexDirection:"column",zIndex:500,boxShadow:"-4px 0 20px rgba(0,0,0,0.06)"}}>
@@ -1429,7 +1473,7 @@ function AIPanel({project,cast,onClose,onGoToProfile}){
         </div>
       )}
       <div style={{display:"flex",borderBottom:"1px solid #E8E8E8"}}>
-        {[["write","Write"],["correct","Corrections"],["voice","Character Voice"]].map(([id,lbl])=>(
+        {[["write","Write"],["correct","Corrections"],["voice","Character Voice"],["convert","Convert"]].map(([id,lbl])=>(
           <button key={id} onClick={()=>setMode(id)} style={{flex:1,padding:"10px 4px",background:"none",border:"none",borderBottom:`2px solid ${mode===id?"#000":"transparent"}`,color:mode===id?"#000":"#AAA",cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase"}}>{lbl}</button>
         ))}
       </div>
@@ -1472,11 +1516,22 @@ function AIPanel({project,cast,onClose,onGoToProfile}){
             }
           </div>
         )}
+        {mode==="convert"&&(
+          <div>
+            <label style={css.label}>Screenplay draft → novel prose</label>
+            <p style={{margin:"0 0 12px",fontSize:11.5,color:"#AAA",lineHeight:1.6}}>Strictly a format converter, not a rewriter — it restructures your exact words (character cues, quoted dialogue, and narration lines) into flowing prose paragraphs. It won't reword, embellish, or fix anything you didn't explicitly ask for; anything unclear in the source gets flagged in brackets instead of silently "fixed."</p>
+            <textarea value={convertInput} onChange={e=>setConvertInput(e.target.value)} placeholder={`ELIX\n"The sky used to be so blue."\nI think to myself, looking up.`} style={{...css.input,resize:"vertical",minHeight:140,lineHeight:1.6,fontSize:12,fontFamily:"'Courier New',monospace"}}/>
+            <button onClick={doConvert} disabled={loading||!convertInput.trim()} style={{marginTop:8,width:"100%",padding:"10px",borderRadius:4,background:"#000",color:"#FFF",border:"none",cursor:loading?"wait":"pointer",fontFamily:"inherit",fontWeight:700,fontSize:13,opacity:loading||!convertInput.trim()?0.4:1}}>{loading?"Converting...":"Convert to Prose"}</button>
+          </div>
+        )}
         {(response||loading)&&(
           <div style={{borderTop:"1px solid #EBEBEB",paddingTop:16}}>
             <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
               <label style={css.label}>Response</label>
-              {response&&<button onClick={()=>{setResponse("");setPrompt("");}} style={{background:"none",border:"none",color:"#AAA",cursor:"pointer",fontSize:12}}>Clear</button>}
+              <div style={{display:"flex",gap:12}}>
+                {response&&<button onClick={()=>navigator.clipboard?.writeText(response)} style={{background:"none",border:"none",color:"#AAA",cursor:"pointer",fontSize:12}}>Copy</button>}
+                {response&&<button onClick={()=>{setResponse("");setPrompt("");}} style={{background:"none",border:"none",color:"#AAA",cursor:"pointer",fontSize:12}}>Clear</button>}
+              </div>
             </div>
             <div style={{background:"#FAFAFA",border:"1px solid #EBEBEB",borderRadius:6,padding:"14px 16px",maxHeight:300,overflowY:"auto"}}>
               <p style={{margin:0,fontSize:12,color:"#333",whiteSpace:"pre-wrap",lineHeight:1.8,fontFamily:"'Courier New',monospace"}}>{loading?"...":response}</p>
