@@ -550,7 +550,7 @@ function LineVoiceControl({audio,onRecorded,onDelete,dark}){
   );
 }
 
-function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageChange,focusMode,scrollRef,darkCanvas,onCharFocus,profile,onEditTitlePage,onForceSave,flushRef,undoRedoRef,freePages,onUpdateFreePages}){
+function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageChange,focusMode,scrollRef,darkCanvas,onCharFocus,profile,onEditTitlePage,onForceSave,flushRef,undoRedoRef,freePages,onUpdateFreePages,rulerOpen}){
   const [lines,setLines]=useState(()=>
     project?.lines?.length?project.lines:[{id:Date.now(),text:"",mode:"action"}]
   );
@@ -1198,6 +1198,7 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
     <div ref={containerRef} style={{flex:1,position:"relative",overflowY:"auto",
       background:darkCanvas?"#1A1A1A":"#D8D8D8",padding:"40px 0 80px",transition:"background 0.25s ease"}}>
       <ModePill mode={lines[curLine]?.mode||"action"} visible={pillVisible} x={pillPos.x} y={pillPos.y}/>
+      {rulerOpen&&<Ruler dark={darkCanvas}/>}
 
       <TitlePage project={project} profile={profile} format={format} dark={darkCanvas} onEdit={onEditTitlePage||(() => {})}/>
 
@@ -2934,6 +2935,61 @@ function SceneNavigator({lines,onJumpTo,collapsed,onToggle,statuses,onUpdateStat
   );
 }
 
+// A verify tool, not an adjust tool — margins here are already enforced
+// automatically (1.5in left, 1in elsewhere) and can't be dragged, unlike a
+// general word processor's ruler. This exists so a professional writer can
+// visually confirm the page really is at spec before submitting, not to
+// let them change anything. 96px = 1in, matching the page's actual 816px
+// (8.5in) width used everywhere else in the app.
+function Ruler({dark}){
+  const ticks=[];
+  for(let i=0;i<=8.5;i+=0.125){
+    const isInch=Number.isInteger(i);
+    const isHalf=!isInch&&Number.isInteger(i*2);
+    ticks.push({pos:i*96,isInch,isHalf,label:isInch?String(i):null});
+  }
+  const line=dark?"#555":"#AAA",bg=dark?"#1A1A1A":"#EDEDED",border=dark?"#333":"#CCC",shade=dark?"rgba(255,255,255,0.05)":"rgba(0,0,0,0.05)",label=dark?"#999":"#888";
+  return(
+    <div style={{position:"sticky",top:0,zIndex:40,width:816,margin:"0 auto",height:22,background:bg,borderBottom:`1px solid ${border}`,fontFamily:"'Courier New',monospace"}}>
+      <div style={{position:"absolute",left:0,top:0,width:144,height:"100%",background:shade}} title="Left margin — 1.5in"/>
+      <div style={{position:"absolute",right:0,top:0,width:96,height:"100%",background:shade}} title="Right margin — 1in"/>
+      {ticks.map((t,i)=>(
+        <div key={i} style={{position:"absolute",left:t.pos,top:t.isInch?0:t.isHalf?8:12,width:1,height:t.isInch?22:t.isHalf?14:10,background:line}}>
+          {t.label&&<span style={{position:"absolute",top:2,left:3,fontSize:9,color:label}}>{t.label}</span>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DocumentInfo({project,pageInfo,onClose}){
+  const wordCount=useMemo(()=>(project?.lines||[]).reduce((sum,l)=>sum+(l.text?.trim()?l.text.trim().split(/\s+/).length:0),0),[project?.lines]);
+  const fmtLabel=FORMATS.find(f=>f.id===project?.format)?.label||project?.format||"—";
+  const rows=[
+    ["Project",project?.title||"Untitled"],
+    ["Format",fmtLabel],
+    ["Font","Courier New, 12pt"],
+    ["Pages",pageInfo?.total||1],
+    ["Word count",wordCount.toLocaleString()],
+  ];
+  return(
+    <div style={{width:220,minWidth:220,borderLeft:"1px solid #EBEBEB",background:"#FAFAFA",display:"flex",flexDirection:"column",flexShrink:0,overflow:"hidden"}}>
+      <div style={{padding:"12px 14px 10px",borderBottom:"1px solid #EBEBEB",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+        <span style={{fontSize:9,fontWeight:800,color:"#AAA",letterSpacing:"0.14em",textTransform:"uppercase"}}>Document Info</span>
+        <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",color:"#CCC",fontSize:14,padding:0}}>×</button>
+      </div>
+      <div style={{padding:"16px 14px",display:"flex",flexDirection:"column",gap:14,overflowY:"auto"}}>
+        {rows.map(([label,val])=>(
+          <div key={label}>
+            <p style={{margin:"0 0 2px",fontSize:9,fontWeight:800,color:"#BBB",letterSpacing:"0.1em",textTransform:"uppercase"}}>{label}</p>
+            <p style={{margin:0,fontSize:13,color:"#333"}}>{val}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function PageOverview({lines,onJumpTo,onClose}){
   const pages=[];
   let currentPage=1,snippet="",startIdx=0;
@@ -3123,6 +3179,9 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
   const [castOpen,setCastOpen]=useState(false);
   const [notesOpen,setNotesOpen]=useState(false);
   const [overviewOpen,setOverviewOpen]=useState(false);
+  const [viewMenuOpen,setViewMenuOpen]=useState(false);
+  const [rulerOpen,setRulerOpen]=useState(false);
+  const [docInfoOpen,setDocInfoOpen]=useState(false);
   const [beatsOpen,setBeatsOpen]=useState(false);
   const [beatsExpanded,setBeatsExpanded]=useState(false);
   const [moodOpen,setMoodOpen]=useState(false);
@@ -3248,7 +3307,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
             </div>
           </div>
           <div style={{flex:1,overflow:"hidden"}}>
-            {active&&<SmartEditor project={active} cast={cast} onUpdateContent={updateLines} onAddCharacter={addCharacter} format={active.format} onPageChange={(cur,total)=>setPageInfo({cur,total})} focusMode={true} scrollRef={sceneNavRef} profile={profile} onEditTitlePage={()=>setTitlePageEditorOpen(true)} onForceSave={forceSaveNow} flushRef={flushRef} undoRedoRef={undoRedoRef} freePages={active.freePages} onUpdateFreePages={updateFreePages}/>}
+            {active&&<SmartEditor project={active} cast={cast} onUpdateContent={updateLines} onAddCharacter={addCharacter} format={active.format} onPageChange={(cur,total)=>setPageInfo({cur,total})} focusMode={true} scrollRef={sceneNavRef} profile={profile} onEditTitlePage={()=>setTitlePageEditorOpen(true)} onForceSave={forceSaveNow} flushRef={flushRef} undoRedoRef={undoRedoRef} freePages={active.freePages} onUpdateFreePages={updateFreePages} rulerOpen={rulerOpen}/>}
           </div>
         </div>
       )}
@@ -3361,11 +3420,38 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
               <button onClick={()=>setImportOpen(true)} style={{padding:"6px 12px",borderRadius:4,border:"1px solid #D0D0D0",flexShrink:0,background:"#FAFAFA",color:"#555",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>↑ Import</button>
               <button onClick={()=>setExportOpen(true)} style={{padding:"6px 12px",borderRadius:4,border:"1px solid #D0D0D0",flexShrink:0,background:"#FAFAFA",color:"#555",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>↓ Export</button>
               <button onClick={addFreePage} title="Insert a free-form page for an image, notes, or a cover — attaches to the front or back of the script" style={{padding:"6px 12px",borderRadius:4,border:"1px solid #D0D0D0",flexShrink:0,background:"#FAFAFA",color:"#555",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>+ Page</button>
-              <button onClick={()=>setSceneNavCollapsed(o=>!o)} style={{padding:"6px 10px",borderRadius:4,flexShrink:0,border:`1px solid ${!sceneNavCollapsed?"#000":"#D0D0D0"}`,background:!sceneNavCollapsed?"#000":"#FAFAFA",color:!sceneNavCollapsed?"#FFF":"#555",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>≡ Scenes</button>
-              <button onClick={()=>setOverviewOpen(o=>!o)} title="A simple per-page list to jump around — not a visual thumbnail grid" style={{padding:"6px 10px",borderRadius:4,flexShrink:0,border:`1px solid ${overviewOpen?"#000":"#D0D0D0"}`,background:overviewOpen?"#000":"#FAFAFA",color:overviewOpen?"#FFF":"#555",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>▤ Overview</button>
-              <button onClick={()=>setGalleryOpen(o=>!o)} title="Upload images and link them to a page range — your storyboard/shot list" style={{padding:"6px 10px",borderRadius:4,flexShrink:0,border:`1px solid ${galleryOpen?"#000":"#D0D0D0"}`,background:galleryOpen?"#000":"#FAFAFA",color:galleryOpen?"#FFF":"#555",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>⬚ Storyboard</button>
-              <button onClick={()=>setCharPanelOpen(o=>!o)} title="Quick-reference card for whichever character you're currently writing" style={{padding:"6px 10px",borderRadius:4,flexShrink:0,border:`1px solid ${charPanelOpen?"#000":"#D0D0D0"}`,background:charPanelOpen?"#000":"#FAFAFA",color:charPanelOpen?"#FFF":"#555",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>◉ Character Info</button>
-              <button onClick={()=>setNotesOpen(o=>!o)} style={{padding:"6px 10px",borderRadius:4,flexShrink:0,border:`1px solid ${notesOpen?"#000":"#D0D0D0"}`,background:notesOpen?"#000":"#FAFAFA",color:notesOpen?"#FFF":"#555",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>≡ Notes</button>
+              <div style={{position:"relative",flexShrink:0}}>
+                <button onClick={()=>setViewMenuOpen(o=>!o)} style={{padding:"6px 12px",borderRadius:4,border:`1px solid ${viewMenuOpen?"#000":"#D0D0D0"}`,background:viewMenuOpen?"#000":"#FAFAFA",color:viewMenuOpen?"#FFF":"#555",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:5}}>▾ View</button>
+                {viewMenuOpen&&<div onClick={()=>setViewMenuOpen(false)} style={{position:"fixed",inset:0,zIndex:600}}/>}
+                {viewMenuOpen&&(
+                  <div style={{position:"absolute",top:"100%",left:0,marginTop:6,background:"#FFF",border:"1px solid #E0E0E0",borderRadius:6,boxShadow:"0 4px 16px rgba(0,0,0,0.1)",zIndex:601,minWidth:190,overflow:"hidden",padding:"4px 0"}}>
+                    {[
+                      ["≡","Scenes",!sceneNavCollapsed,()=>setSceneNavCollapsed(o=>!o)],
+                      ["▤","Page Overview",overviewOpen,()=>setOverviewOpen(o=>!o)],
+                      ["⬚","Storyboard",galleryOpen,()=>setGalleryOpen(o=>!o)],
+                      ["◉","Character Info",charPanelOpen,()=>setCharPanelOpen(o=>!o)],
+                      ["≡","Notes",notesOpen,()=>setNotesOpen(o=>!o)],
+                    ].map(([icon,label,isOn,toggle])=>(
+                      <button key={label} onClick={toggle} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"8px 14px",background:"none",border:"none",cursor:"pointer",textAlign:"left",fontFamily:"inherit",fontSize:12.5,color:"#333"}}>
+                        <span style={{width:14,textAlign:"center",fontSize:12,color:"#888"}}>{icon}</span>
+                        <span style={{flex:1}}>{label}</span>
+                        <span style={{fontSize:11,color:isOn?"#000":"#DDD",fontWeight:700}}>{isOn?"✓":""}</span>
+                      </button>
+                    ))}
+                    <div style={{borderTop:"1px solid #EEE",margin:"4px 0"}}/>
+                    {[
+                      ["📏","Ruler",rulerOpen,()=>setRulerOpen(o=>!o)],
+                      ["ⓘ","Document Info",docInfoOpen,()=>setDocInfoOpen(o=>!o)],
+                    ].map(([icon,label,isOn,toggle])=>(
+                      <button key={label} onClick={toggle} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"8px 14px",background:"none",border:"none",cursor:"pointer",textAlign:"left",fontFamily:"inherit",fontSize:12.5,color:"#333"}}>
+                        <span style={{width:14,textAlign:"center",fontSize:12,color:"#888"}}>{icon}</span>
+                        <span style={{flex:1}}>{label}</span>
+                        <span style={{fontSize:11,color:isOn?"#000":"#DDD",fontWeight:700}}>{isOn?"✓":""}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </>
           )}
           {nav!=="write"&&<p style={{margin:0,fontSize:14,fontWeight:800,color:"#000",letterSpacing:"0.04em",textTransform:"uppercase"}}>{NAV_ITEMS.find(n=>n.id===nav)?.label}</p>}
@@ -3410,7 +3496,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
           {nav==="write"&&(
             active?(
               <div style={{display:((beatsOpen&&beatsExpanded)||(moodOpen&&moodExpanded))?"none":"flex",flex:1,minWidth:0}}>
-                <SmartEditor project={active} cast={cast} onUpdateContent={updateLines} onAddCharacter={addCharacter} format={active.format} onPageChange={(cur,total)=>setPageInfo({cur,total})} focusMode={focusMode} scrollRef={sceneNavRef} darkCanvas={darkCanvas} onCharFocus={setCurrentCharName} key={active?.id} profile={profile} onEditTitlePage={()=>setTitlePageEditorOpen(true)} onForceSave={forceSaveNow} flushRef={flushRef} undoRedoRef={undoRedoRef} freePages={active.freePages} onUpdateFreePages={updateFreePages}/>
+                <SmartEditor project={active} cast={cast} onUpdateContent={updateLines} onAddCharacter={addCharacter} format={active.format} onPageChange={(cur,total)=>setPageInfo({cur,total})} focusMode={focusMode} scrollRef={sceneNavRef} darkCanvas={darkCanvas} onCharFocus={setCurrentCharName} key={active?.id} profile={profile} onEditTitlePage={()=>setTitlePageEditorOpen(true)} onForceSave={forceSaveNow} flushRef={flushRef} undoRedoRef={undoRedoRef} freePages={active.freePages} onUpdateFreePages={updateFreePages} rulerOpen={rulerOpen}/>
               </div>
             ):(
               <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16}}>
@@ -3420,10 +3506,11 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
             )
           )}
 
-          {(charPanelOpen||galleryOpen||notesOpen||overviewOpen||!sceneNavCollapsed)&&nav==="write"&&(
+          {(charPanelOpen||galleryOpen||notesOpen||overviewOpen||docInfoOpen||!sceneNavCollapsed)&&nav==="write"&&(
             <div style={{position:"fixed",top:48,right:0,bottom:32,display:"flex",zIndex:300,boxShadow:"-4px 0 20px rgba(0,0,0,0.08)"}}>
               {!sceneNavCollapsed&&<SceneNavigator lines={active?.lines||[]} onJumpTo={jumpToLine} collapsed={sceneNavCollapsed} onToggle={()=>setSceneNavCollapsed(o=>!o)} statuses={active?.sceneStatuses} onUpdateStatuses={updateSceneStatuses} acts={active?.sceneActs} onUpdateActs={updateSceneActs}/>}
               {overviewOpen&&<PageOverview lines={active?.lines||[]} onJumpTo={jumpToLine} onClose={()=>setOverviewOpen(false)}/>}
+              {docInfoOpen&&active&&<DocumentInfo project={active} pageInfo={pageInfo} onClose={()=>setDocInfoOpen(false)}/>}
               {charPanelOpen&&<CharacterContextPanel cast={cast} currentCharName={currentCharName} onClose={()=>setCharPanelOpen(false)}/>}
               {galleryOpen&&active&&<SceneGallery project={active} onUpdate={updateSceneGallery} currentPage={pageInfo.cur}/>}
               {notesOpen&&active&&<NotesPanel notes={active?.notes||""} onChange={updateNotes} onClose={()=>setNotesOpen(false)}/>}
