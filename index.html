@@ -1559,7 +1559,7 @@ its own line rather than folded into prose?`;
 }
 
 // ─── CAST PANEL ───────────────────────────────────────────────────────────────
-function CastPanel({cast,lines,onUpdate,onAdd,onDelete,onClose,onJumpTo}){
+function CastPanel({cast,lines,sceneActs,onUpdate,onAdd,onDelete,onClose,onJumpTo}){
   const [sel,setSel]=useState(0);
   const [saved,setSaved]=useState(false);
   const [search,setSearch]=useState("");
@@ -1591,9 +1591,9 @@ function CastPanel({cast,lines,onUpdate,onAdd,onDelete,onClose,onJumpTo}){
     const targetNames=cast.filter(c=>targetIds.has(c.id)).map(c=>(c.name||"").trim().toUpperCase());
     if(targetNames.length===0) return [];
     const results=[];
-    let sceneText="(before first scene heading)";
+    let sceneText="(before first scene heading)",sceneNum=0,sceneIdx=-1;
     lines.forEach((line,idx)=>{
-      if(line.mode==="location"&&line.text?.trim()) sceneText=line.text.trim();
+      if(line.mode==="location"&&line.text?.trim()){sceneText=line.text.trim();sceneNum++;sceneIdx=idx;}
       if(line.mode==="character"){
         const base=(line.text||"").replace(/\(.*?\)/g,"").trim().toUpperCase();
         if(targetNames.includes(base)){
@@ -1602,12 +1602,12 @@ function CastPanel({cast,lines,onUpdate,onAdd,onDelete,onClose,onJumpTo}){
             if(lines[j].mode==="dialogue"&&lines[j].text?.trim())dlines.push(lines[j].text.trim());
             j++;
           }
-          results.push({idx,character:line.text.trim(),scene:sceneText,page:Math.floor(idx/55)+1,text:dlines.join(" ")});
+          results.push({idx,character:line.text.trim(),scene:sceneText,sceneNum,act:sceneActs?.[sceneIdx]||"",page:Math.floor(idx/55)+1,text:dlines.join(" ")});
         }
       }
     });
     return results;
-  },[mode,checked,cur,cast,lines]);
+  },[mode,checked,cur,cast,lines,sceneActs]);
 
   return(
     <div style={{width:420,borderRight:"1px solid #EBEBEB",display:"flex",flexShrink:0,overflow:"hidden",background:"#FFF"}}>
@@ -1659,7 +1659,7 @@ function CastPanel({cast,lines,onUpdate,onAdd,onDelete,onClose,onJumpTo}){
                 <span style={{fontSize:10,color:"#BBB"}}>p.{r.page}</span>
               </div>
               <p style={{margin:"0 0 4px",fontSize:12,color:"#333",lineHeight:1.5}}>{r.text||"(no dialogue text)"}</p>
-              <span style={{fontSize:9,color:"#CCC",textTransform:"uppercase",letterSpacing:"0.04em"}}>{r.scene}</span>
+              <span style={{fontSize:9,color:"#CCC",textTransform:"uppercase",letterSpacing:"0.04em"}}>{r.act&&`${r.act} · `}Scene {r.sceneNum||"—"} · {r.scene}</span>
             </div>
           ))}
         </div>
@@ -1944,6 +1944,7 @@ function Dashboard({user,onOpen,onNew,onSignOut}){
   const [renameVal,setRenameVal]=useState("");
   const [confirmDelete,setConfirmDelete]=useState(null);
   const [search,setSearch]=useState("");
+  const [newMenuOpen,setNewMenuOpen]=useState(false);
   const save=(ps)=>{setProjects(ps);LS.set(projectsKey,ps);};
   const deleteProject=(id)=>save(projects.filter(p=>p.id!==id));
   const duplicateProject=(p)=>{const copy={...p,id:Date.now(),title:p.title+" (copy)",created:Date.now()};save([copy,...projects]);};
@@ -1962,7 +1963,18 @@ function Dashboard({user,onOpen,onNew,onSignOut}){
       <div style={{flex:1,padding:"48px",maxWidth:1000,margin:"0 auto",width:"100%",boxSizing:"border-box"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
           <h2 style={{margin:0,fontSize:26,fontWeight:900,color:"#000"}}>Your Projects</h2>
-          <button onClick={()=>onNew(save,projects)} style={{padding:"9px 20px",background:"#000",color:"#FFF",border:"none",borderRadius:4,cursor:"pointer",fontFamily:"inherit",fontWeight:700,fontSize:13}}>+ New Project</button>
+          <div style={{position:"relative"}}>
+            <button onClick={()=>setNewMenuOpen(o=>!o)} style={{padding:"9px 20px",background:"#000",color:"#FFF",border:"none",borderRadius:4,cursor:"pointer",fontFamily:"inherit",fontWeight:700,fontSize:13}}>+ New Project</button>
+            {newMenuOpen&&(
+              <div onClick={()=>setNewMenuOpen(false)} style={{position:"fixed",inset:0,zIndex:500}}/>
+            )}
+            {newMenuOpen&&(
+              <div style={{position:"absolute",top:"100%",right:0,marginTop:6,background:"#FFF",border:"1px solid #E0E0E0",borderRadius:6,boxShadow:"0 4px 16px rgba(0,0,0,0.1)",zIndex:501,minWidth:200,overflow:"hidden"}}>
+                <button onClick={()=>{setNewMenuOpen(false);onNew(save,projects,false);}} style={{display:"block",width:"100%",padding:"11px 16px",background:"none",border:"none",borderBottom:"1px solid #F0F0F0",cursor:"pointer",textAlign:"left",fontFamily:"inherit",fontSize:13,color:"#000",fontWeight:600}}>Blank Project</button>
+                <button onClick={()=>{setNewMenuOpen(false);onNew(save,projects,true);}} style={{display:"block",width:"100%",padding:"11px 16px",background:"none",border:"none",cursor:"pointer",textAlign:"left",fontFamily:"inherit",fontSize:13,color:"#000",fontWeight:600}}>Import a Script</button>
+              </div>
+            )}
+          </div>
         </div>
         {projects.length>1&&(
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search your projects..."
@@ -1971,7 +1983,10 @@ function Dashboard({user,onOpen,onNew,onSignOut}){
         {projects.length===0?(
           <div style={{textAlign:"center",padding:"80px 0",color:"#CCC"}}>
             <p style={{fontSize:14,margin:"0 0 20px"}}>No projects yet.</p>
-            <button onClick={()=>onNew(save,projects)} style={{padding:"10px 24px",background:"#000",color:"#FFF",border:"none",borderRadius:4,cursor:"pointer",fontFamily:"inherit",fontWeight:700}}>Create your first project</button>
+            <div style={{display:"flex",gap:10,justifyContent:"center"}}>
+              <button onClick={()=>onNew(save,projects,false)} style={{padding:"10px 24px",background:"#000",color:"#FFF",border:"none",borderRadius:4,cursor:"pointer",fontFamily:"inherit",fontWeight:700}}>Start Blank</button>
+              <button onClick={()=>onNew(save,projects,true)} style={{padding:"10px 24px",background:"none",color:"#000",border:"1px solid #D0D0D0",borderRadius:4,cursor:"pointer",fontFamily:"inherit",fontWeight:700}}>Import a Script</button>
+            </div>
           </div>
         ):(
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:16}}>
@@ -2019,7 +2034,7 @@ function Setup({existing,onSave}){
   const [p,setP]=useState(existing||{name:"",format:"film",genre:"Dark Fantasy",genres:[],styles:[]});
   const upd=(k,v)=>setP(prev=>({...prev,[k]:v}));
   const tog=(k,v)=>setP(prev=>({...prev,[k]:prev[k].includes(v)?prev[k].filter(x=>x!==v):[...prev[k],v]}));
-  const STYLES=["Cinematic","Literary","Fast-paced","Dialogue-driven","Atmospheric","Minimalist","Dark & Gritty","Lyrical","Epic","Intimate","Experimental"];
+  const STYLES=["Cinematic","Literary","Fast-paced","Dialogue-driven","Minimalist","Atmospheric"];
   const steps=[
     {title:"Your name",content:(<div><label style={css.label}>Pen name or real name</label><input style={{...css.input,fontSize:16,padding:"12px 14px"}} value={p.name} onChange={e=>upd("name",e.target.value)} placeholder="e.g. B. Hill" autoFocus onKeyDown={e=>{if(e.key==="Enter"&&p.name.trim().length>0)setStep(s=>s+1);}}/></div>),ok:p.name.trim().length>0},
     {title:"Format & Genre",content:(
@@ -2196,6 +2211,46 @@ function stripInlineTag(t){
 
 // Groups classified lines into blocks (continuation lines of the same mode
 // merge, joined by \n) — same "block" concept the AI classifier used.
+// Title pages vary a lot, so this stays conservative: it only ever touches
+// the very first few lines of a document, and only strips three specific,
+// reliably-recognizable things — a title line, an explicit "Written
+// by"/"By"/"Screenplay by" credit block, and email/phone-shaped contact
+// lines. It never guesses at arbitrary short lines near the top, since
+// that risks eating real early script content (a cold open with a short
+// action line, for instance).
+function extractFrontMatter(rawText){
+  const rawLines=rawText.split("\n");
+  const trimmed=rawLines.map(l=>l.trim());
+  const SCAN_LIMIT=Math.min(trimmed.length,20);
+  const consumed=new Set();
+  let title=null,writtenBy=null;
+  let i=0;
+  while(i<SCAN_LIMIT&&!trimmed[i]) i++;
+  if(i<SCAN_LIMIT){
+    const l=trimmed[i];
+    if(l&&l.length<80&&!/^(INT|EXT)[.\s]/i.test(l)){title=l;consumed.add(i);i++;}
+  }
+  for(let j=i;j<SCAN_LIMIT;j++){
+    const l=trimmed[j];
+    if(!l) continue;
+    const creditMatch=l.match(/^(?:written\s+by|screenplay\s+by|story\s+by|by)\s*:?\s*(.*)$/i);
+    if(creditMatch){
+      consumed.add(j);
+      if(creditMatch[1]&&creditMatch[1].trim()){
+        writtenBy=creditMatch[1].trim();
+      }else{
+        let k=j+1;const names=[];
+        while(k<SCAN_LIMIT&&trimmed[k]&&trimmed[k].length<60){names.push(trimmed[k]);consumed.add(k);k++;}
+        if(names.length) writtenBy=names.join(", ");
+      }
+      continue;
+    }
+    if(/^\S+@\S+\.\S+$/.test(l)||/^\+?\(?\d{2,4}\)?[\d\-.\s]{6,}\d$/.test(l)){consumed.add(j);continue;}
+  }
+  if(!title&&!writtenBy) return null;
+  return {title,writtenBy,bodyText:rawLines.filter((_,idx)=>!consumed.has(idx)).join("\n")};
+}
+
 function classifyScriptText(rawText,format){
   const rawLines=rawText.split("\n");
   const blocks=[];
@@ -2520,6 +2575,14 @@ function ImportModal({profile,onImport,onClose}){
   const [fmt,setFmt]=useState(profile?.format||"film");
   const [genre,setGenre]=useState(profile?.genre||"Dark Fantasy");
   const [title,setTitle]=useState("Imported Script");
+  const [detectedWrittenBy,setDetectedWrittenBy]=useState(null);
+  useEffect(()=>{
+    if(!raw.trim()) return;
+    const front=extractFrontMatter(raw);
+    if(!front) return;
+    if(front.title&&title==="Imported Script") setTitle(front.title);
+    if(front.writtenBy) setDetectedWrittenBy(front.writtenBy);
+  },[raw]);
   const [loading,setLoading]=useState(false);
   const [status,setStatus]=useState("");
   const [error,setError]=useState("");
@@ -2562,10 +2625,12 @@ function ImportModal({profile,onImport,onClose}){
   const canImport=raw.trim().length>0||filePayload!==null;
   const doTextImport=()=>{
     if(!raw.trim()){if(filePayload?.type==="image"){setError("Image files need Smart Upload.");}else if(filePayload?.type==="pdf"){setError("This PDF needs Smart Upload.");}return;}
+    const front=extractFrontMatter(raw);
+    const bodyText=front?front.bodyText:raw;
     // Normalize whitespace — PDF extraction often produces "word   spaced   text"
     const normalize=(s)=>s.replace(/[ \t]+/g," ").trim();
-    const lines=raw.split("\n").map(l=>normalize(l)).filter(Boolean).map((text,i)=>({id:Date.now()+i,text,mode:"action"}));
-    onImport({title,format:fmt,genre,lines,cast:[]});
+    const lines=bodyText.split("\n").map(l=>normalize(l)).filter(Boolean).map((text,i)=>({id:Date.now()+i,text,mode:"action"}));
+    onImport({title,format:fmt,genre,lines,cast:[],writtenBy:detectedWrittenBy||undefined});
   };
   const doImport=async()=>{
     if(!canImport) return;
@@ -2573,13 +2638,18 @@ function ImportModal({profile,onImport,onClose}){
     // Plain/extracted text (paste, .txt, DOCX, or a PDF with a real text layer)
     // is classified locally — no API call, runs instantly.
     if(!filePayload){
-      const parsed=classifyScriptText(raw,fmt);
+      // Strip the detected title page (title, "Written by" credit, contact
+      // info) before classifying, so it doesn't end up as body lines mixed
+      // in with the actual script.
+      const front=extractFrontMatter(raw);
+      const bodyText=front?front.bodyText:raw;
+      const parsed=classifyScriptText(bodyText,fmt);
       if(parsed.length===0){setError("No lines found.");return;}
       const charNames=[...new Set(parsed.filter(l=>l.mode==="character"&&l.text?.trim())
         .map(l=>extractCueName(l.text,fmt)).filter(n=>n&&!CUE_NAME_DENYLIST.has(n)))];
       const lines=parsed.map((l,i)=>({id:Date.now()+i,text:l.text||"",mode:l.mode||"action"}));
       const cast=charNames.map((name,i)=>({id:Date.now()+5000+i,name,role:"Supporting",voice:"",notes:""}));
-      onImport({title,format:fmt,genre,lines,cast});
+      onImport({title,format:fmt,genre,lines,cast,writtenBy:detectedWrittenBy||undefined});
       return;
     }
     // Images and scanned PDFs have no extractable text — the AI vision call
@@ -2790,7 +2860,7 @@ function BeatBoard({project,onUpdate}){
                     style={{width:165,background:"#FFF",border:`1px solid ${dragOver===globalIdx?"#000":"#E0E0E0"}`,borderRadius:6,padding:"11px 12px",cursor:"grab",opacity:dragging===globalIdx?0.4:1}}>
                     {editing===beat.id?(
                       <>
-                        <input value={beat.title} onChange={e=>updateBeat(beat.id,{title:e.target.value})} style={{width:"100%",border:"none",borderBottom:"1px solid #E0E0E0",outline:"none",fontSize:12,fontWeight:700,marginBottom:6,background:"transparent",fontFamily:"inherit"}} onBlur={()=>setEditing(null)} autoFocus/>
+                        <input value={beat.title} onChange={e=>updateBeat(beat.id,{title:e.target.value})} style={{width:"100%",border:"none",borderBottom:"1px solid #E0E0E0",outline:"none",fontSize:12,fontWeight:700,marginBottom:6,background:"transparent",fontFamily:"inherit"}} autoFocus/>
                         <textarea value={beat.body} onChange={e=>updateBeat(beat.id,{body:e.target.value})} style={{width:"100%",border:"1px solid #EBEBEB",borderRadius:3,outline:"none",fontSize:11,resize:"none",minHeight:60,padding:6,fontFamily:"inherit",lineHeight:1.5,boxSizing:"border-box"}}/>
                         <select value={beat.act} onChange={e=>updateBeat(beat.id,{act:e.target.value})} style={{...css.input,fontSize:10,padding:"3px 6px",marginTop:6}}>{ACT_LABELS.map(a=><option key={a}>{a}</option>)}</select>
                       </>
@@ -2801,7 +2871,9 @@ function BeatBoard({project,onUpdate}){
                       </>
                     )}
                     <div style={{display:"flex",justifyContent:"space-between",marginTop:8}}>
-                      <button onClick={()=>setEditing(beat.id)} style={{background:"none",border:"none",cursor:"pointer",fontSize:10,color:"#BBB",padding:0,fontFamily:"inherit"}}>Edit</button>
+                      {editing===beat.id
+                        ?<button onClick={()=>setEditing(null)} style={{background:"none",border:"none",cursor:"pointer",fontSize:10,color:"#000",fontWeight:700,padding:0,fontFamily:"inherit"}}>Done</button>
+                        :<button onClick={()=>setEditing(beat.id)} style={{background:"none",border:"none",cursor:"pointer",fontSize:10,color:"#BBB",padding:0,fontFamily:"inherit"}}>Edit</button>}
                       <button onClick={()=>deleteBeat(beat.id)} style={{background:"none",border:"none",cursor:"pointer",fontSize:10,color:"#CCC",padding:0,fontFamily:"inherit"}}>×</button>
                     </div>
                   </div>
@@ -2817,7 +2889,7 @@ function BeatBoard({project,onUpdate}){
 }
 
 const SCENE_STATUS={todo:{icon:"○",label:"To Do"},inprogress:{icon:"◑",label:"In Progress"},done:{icon:"●",label:"Done"},revision:{icon:"✗",label:"Needs Revision"}};
-function SceneNavigator({lines,onJumpTo,collapsed,onToggle,statuses,onUpdateStatuses}){
+function SceneNavigator({lines,onJumpTo,collapsed,onToggle,statuses,onUpdateStatuses,acts,onUpdateActs}){
   const scenes=[];let page=1;
   lines.forEach((line,idx)=>{if(line.mode==="location"&&line.text?.trim()) scenes.push({idx,text:line.text.trim(),page});if(idx>0&&idx%55===0) page++;});
   const cycleStatus=(idx,e)=>{
@@ -2838,22 +2910,25 @@ function SceneNavigator({lines,onJumpTo,collapsed,onToggle,statuses,onUpdateStat
           const statusKey=statuses?.[s.idx]||"todo";
           const status=SCENE_STATUS[statusKey];
           return(
-          <div key={s.idx} onClick={()=>onJumpTo(s.idx)} style={{padding:"8px 12px",borderBottom:"1px solid #F0F0F0",cursor:"pointer",display:"flex",alignItems:"flex-start",gap:8}}
+          <div key={s.idx} style={{padding:"8px 12px",borderBottom:"1px solid #F0F0F0"}}
             onMouseEnter={e=>e.currentTarget.style.background="#F5F5F5"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-            <span style={{fontSize:9,color:"#CCC",marginTop:2,flexShrink:0,minWidth:16}}>{i+1}</span>
-            <div style={{flex:1,overflow:"hidden"}}><p style={{margin:0,fontSize:11,color:"#333",lineHeight:1.4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.text}</p><span style={{fontSize:9,color:"#BBB"}}>p.{s.page}</span></div>
-            <button onClick={e=>cycleStatus(s.idx,e)} title={`${status.label} — click to change`} style={{background:"none",border:"none",cursor:"pointer",fontSize:11,color:"#AAA",flexShrink:0,padding:0}}>{status.icon}</button>
+            <div onClick={()=>onJumpTo(s.idx)} style={{cursor:"pointer",display:"flex",alignItems:"flex-start",gap:8}}>
+              <span style={{fontSize:9,color:"#CCC",marginTop:2,flexShrink:0,minWidth:16}}>{i+1}</span>
+              <div style={{flex:1,overflow:"hidden"}}><p style={{margin:0,fontSize:11,color:"#333",lineHeight:1.4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.text}</p><span style={{fontSize:9,color:"#BBB"}}>p.{s.page}</span></div>
+            </div>
+            <div style={{marginTop:5,marginLeft:24,display:"flex",gap:6,alignItems:"center"}}>
+              <button onClick={e=>cycleStatus(s.idx,e)} title="Click to change status" style={{background:"none",border:"1px solid #E8E8E8",borderRadius:3,cursor:"pointer",fontSize:9,color:"#888",padding:"2px 6px",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}>
+                <span style={{fontSize:10}}>{status.icon}</span><span>{status.label}</span>
+              </button>
+              <select value={acts?.[s.idx]||""} onChange={e=>{e.stopPropagation();onUpdateActs({...(acts||{}),[s.idx]:e.target.value});}} onClick={e=>e.stopPropagation()}
+                style={{background:"none",border:"1px solid #E8E8E8",borderRadius:3,cursor:"pointer",fontSize:9,color:"#888",padding:"2px 4px",fontFamily:"inherit"}}>
+                <option value="">Act…</option>
+                {ACT_LABELS.map(a=><option key={a} value={a}>{a}</option>)}
+              </select>
+            </div>
           </div>
           );
         })}
-      </div>
-      <div style={{padding:"8px 12px",borderTop:"1px solid #EBEBEB",flexShrink:0}}>
-        {Object.entries(SCENE_STATUS).map(([k,v])=>(
-          <div key={k} style={{display:"flex",alignItems:"center",gap:6,marginBottom:2}}>
-            <span style={{fontSize:10,color:"#AAA",width:12,textAlign:"center"}}>{v.icon}</span>
-            <span style={{fontSize:9,color:"#BBB"}}>{v.label}</span>
-          </div>
-        ))}
       </div>
     </div>
   );
@@ -3031,7 +3106,7 @@ const NAV_ITEMS=[
   {id:"profile",icon:"◎",label:"Profile"},
 ];
 
-function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initialProjects,onSaveProject,onBackToDash,user,onSignOut}){
+function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initialProjects,onSaveProject,onBackToDash,user,onSignOut,autoOpenImport,onAutoOpenImportHandled}){
   const [nav,setNav]=useState("write");
   // Bug fix: this used to seed with just [initialProject], so App never
   // knew about the user's other scripts — the project switcher had nothing
@@ -3056,6 +3131,9 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
   const [hoveredNav,setHoveredNav]=useState(null);
   const [pageInfo,setPageInfo]=useState({cur:1,total:1});
   const [importOpen,setImportOpen]=useState(false);
+  useEffect(()=>{
+    if(autoOpenImport){setImportOpen(true);onAutoOpenImportHandled&&onAutoOpenImportHandled();}
+  },[autoOpenImport]);
   const [exportOpen,setExportOpen]=useState(false);
   const [focusMode,setFocusMode]=useState(false);
   const [shortcutsOpen,setShortcutsOpen]=useState(false);
@@ -3123,12 +3201,13 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
   const updateMoodCards=(cards)=>{if(active)updateProject(active.id,{moodCards:cards});};
   const updateBeats=(changes)=>{if(active)updateProject(active.id,changes);};
   const updateSceneStatuses=(statuses)=>{if(active)updateProject(active.id,{sceneStatuses:statuses});};
+  const updateSceneActs=(acts)=>{if(active)updateProject(active.id,{sceneActs:acts});};
   const updateSceneGallery=(changes)=>{if(active)updateProject(active.id,changes);};
   const updateFreePages=(freePages)=>{if(active)updateProject(active.id,{freePages});};
   const addFreePage=()=>{updateFreePages([...(active?.freePages||[]),{id:Date.now(),position:"front",image:null,text:""}]);};
 
   const importScript=(imported)=>{
-    const p={id:Date.now(),title:imported.title,format:imported.format,genre:imported.genre,lines:imported.lines,cast:imported.cast||[],notes:"",moodCards:[],beats:[],sceneGallery:[],created:Date.now()};
+    const p={id:Date.now(),title:imported.title,format:imported.format,genre:imported.genre,lines:imported.lines,cast:imported.cast||[],writtenBy:imported.writtenBy||"",notes:"",moodCards:[],beats:[],sceneGallery:[],created:Date.now()};
     setProjects(prev=>[p,...prev]);setActiveId(p.id);setNav("write");setImportOpen(false);
   };
 
@@ -3252,7 +3331,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
       </div>
 
       {castOpen&&(
-        <CastPanel cast={cast} lines={active?.lines} onUpdate={updateCharacter}
+        <CastPanel cast={cast} lines={active?.lines} sceneActs={active?.sceneActs} onUpdate={updateCharacter}
           onAdd={(onAdded)=>{const c={id:Date.now(),name:"NEW CHARACTER",role:"Supporting",voice:"",notes:""};addCharacter(c);if(onAdded)onAdded(cast.length);}}
           onDelete={(charId)=>{if(!active)return;updateProject(active.id,{cast:active.cast.filter(c=>c.id!==charId)});}}
           onClose={()=>setCastOpen(false)} onJumpTo={jumpToLine}/>
@@ -3343,7 +3422,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
 
           {(charPanelOpen||galleryOpen||notesOpen||overviewOpen||!sceneNavCollapsed)&&nav==="write"&&(
             <div style={{position:"fixed",top:48,right:0,bottom:32,display:"flex",zIndex:300,boxShadow:"-4px 0 20px rgba(0,0,0,0.08)"}}>
-              {!sceneNavCollapsed&&<SceneNavigator lines={active?.lines||[]} onJumpTo={jumpToLine} collapsed={sceneNavCollapsed} onToggle={()=>setSceneNavCollapsed(o=>!o)} statuses={active?.sceneStatuses} onUpdateStatuses={updateSceneStatuses}/>}
+              {!sceneNavCollapsed&&<SceneNavigator lines={active?.lines||[]} onJumpTo={jumpToLine} collapsed={sceneNavCollapsed} onToggle={()=>setSceneNavCollapsed(o=>!o)} statuses={active?.sceneStatuses} onUpdateStatuses={updateSceneStatuses} acts={active?.sceneActs} onUpdateActs={updateSceneActs}/>}
               {overviewOpen&&<PageOverview lines={active?.lines||[]} onJumpTo={jumpToLine} onClose={()=>setOverviewOpen(false)}/>}
               {charPanelOpen&&<CharacterContextPanel cast={cast} currentCharName={currentCharName} onClose={()=>setCharPanelOpen(false)}/>}
               {galleryOpen&&active&&<SceneGallery project={active} onUpdate={updateSceneGallery} currentPage={pageInfo.cur}/>}
@@ -3384,7 +3463,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
                   <div>
                     <label style={css.label}>Writing Styles</label>
                     <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:4}}>
-                      {["Cinematic","Literary","Fast-paced","Dialogue-driven","Atmospheric","Minimalist","Dark & Gritty","Lyrical","Epic","Intimate","Experimental"].map(s=>{
+                      {["Cinematic","Literary","Fast-paced","Dialogue-driven","Minimalist","Atmospheric"].map(s=>{
                         const active=(profile.styles||[]).includes(s);
                         return <button key={s} onClick={()=>{const styles=active?(profile.styles||[]).filter(x=>x!==s):[...(profile.styles||[]),s];onUpdateProfile&&onUpdateProfile({styles});}}
                           style={{padding:"6px 12px",borderRadius:4,cursor:"pointer",border:`1px solid ${active?"#000":"#E8E8E8"}`,background:active?"#000":"#FAFAFA",color:active?"#FFF":"#666",fontFamily:"inherit",fontSize:12,fontWeight:active?700:400}}>{s}</button>;
@@ -3479,6 +3558,7 @@ function Root(){
   const [dashSave,setDashSave]=useState(null);
   const [dashProjects,setDashProjects]=useState([]);
   const [authMode,setAuthMode]=useState("signin");
+  const [pendingImportOnOpen,setPendingImportOnOpen]=useState(false);
 
   useEffect(()=>{
     const touch=()=>LS.set("sf_last_active",Date.now());touch();
@@ -3509,7 +3589,7 @@ function Root(){
   const handleAuth=(u)=>{setUser(u);LS.set("sf_current_user",u);LS.set("sf_last_active",Date.now());if(!profile){setScreen("setup");return;}setScreen("dashboard");};
   const signOut=()=>{LS.set("sf_current_user",null);LS.set("sf_last_active",null);setUser(null);setActiveProject(null);setScreen("landing");};
   const openProject=(p,saveFn,allProjects)=>{setActiveProject(p);setDashSave(()=>saveFn);setDashProjects(allProjects);setScreen("app");};
-  const newProject=(saveFn,allProjects)=>{
+  const newProject=(saveFn,allProjects,openImport)=>{
     if(!profile||!user) return;
     const p={id:Date.now(),title:"Untitled",format:profile.format,genre:profile.genre,lines:[],cast:[],notes:"",moodCards:[],beats:[],sceneGallery:[],created:Date.now()};
     const updated=[p,...allProjects];
@@ -3518,6 +3598,7 @@ function Root(){
     LS.set(projectsKey,updated);
     saveFn(updated);
     setActiveProject(p);setDashSave(()=>saveFn);setDashProjects(updated);setScreen("app");
+    if(openImport) setPendingImportOnOpen(true);
   };
 
   if(screen==="landing") return <Landing onStart={enter} onSignIn={enterSignIn} hasProfile={!!profile} user={user}/>;
@@ -3547,6 +3628,8 @@ function Root(){
       LS.set(projectsKey,newAll);setDashProjects(newAll);
     }}
     onBackToDash={()=>setScreen("dashboard")}
+    autoOpenImport={pendingImportOnOpen}
+    onAutoOpenImportHandled={()=>setPendingImportOnOpen(false)}
   />;
 }
 
