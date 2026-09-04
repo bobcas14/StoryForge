@@ -1897,7 +1897,7 @@ function Landing({onStart,onSignIn,hasProfile,user}){
   return null;
 }
 
-function AuthScreen({onAuth,initialMode="signin"}){
+function AuthScreen({onAuth,initialMode="signin",onHome}){
   const [mode,setMode]=useState(initialMode);
   const [name,setName]=useState("");
   const [email,setEmail]=useState("");
@@ -1920,8 +1920,9 @@ function AuthScreen({onAuth,initialMode="signin"}){
     }
   };
   return(
-    <div style={{minHeight:"100vh",background:"#FFF",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
-      <p style={{margin:"0 0 40px",fontSize:11,fontWeight:900,letterSpacing:"0.25em",textTransform:"uppercase",color:"#000"}}>STORYFORGE</p>
+    <div style={{minHeight:"100vh",background:"#FFF",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",position:"relative"}}>
+      {onHome&&<button onClick={onHome} style={{position:"absolute",top:24,left:24,background:"none",border:"1px solid #E8E8E8",borderRadius:4,padding:"7px 14px",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600,color:"#888",display:"flex",alignItems:"center",gap:6}}>← Home</button>}
+      <button onClick={onHome} disabled={!onHome} style={{margin:"0 0 40px",fontSize:11,fontWeight:900,letterSpacing:"0.25em",textTransform:"uppercase",color:"#000",background:"none",border:"none",cursor:onHome?"pointer":"default",fontFamily:"inherit",padding:0}}>STORYFORGE</button>
       <div style={{width:360,border:"1px solid #E8E8E8",borderRadius:8,padding:"40px 36px"}}>
         <h2 style={{margin:"0 0 28px",fontSize:22,fontWeight:900,color:"#000"}}>{mode==="signin"?"Sign in":"Create account"}</h2>
         {mode==="signup"&&<div style={{marginBottom:14}}><label style={css.label}>Name</label><input value={name} onChange={e=>setName(e.target.value)} placeholder="B. Hill" style={css.input} onKeyDown={e=>e.key==="Enter"&&submit()}/></div>}
@@ -3710,7 +3711,7 @@ function Root(){
   };
 
   if(screen==="landing") return <Landing onStart={enter} onSignIn={enterSignIn} hasProfile={!!profile} user={user}/>;
-  if(screen==="auth") return <AuthScreen onAuth={handleAuth} initialMode={authMode}/>;
+  if(screen==="auth") return <AuthScreen onAuth={handleAuth} initialMode={authMode} onHome={()=>setScreen("landing")}/>;
   if(screen==="setup") return <Setup existing={profile} onSave={save}/>;
   if(screen==="dashboard"&&user) return <Dashboard user={user} onOpen={openProject} onNew={newProject} onSignOut={signOut}/>;
   return <App
