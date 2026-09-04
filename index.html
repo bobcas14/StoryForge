@@ -3606,10 +3606,10 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
             <span style={{fontSize:10,color:"#CCC",fontStyle:"italic"}}>Tab · Enter · Esc · ⌘K</span>
           )}
           <div style={{marginLeft:"auto",display:"flex",gap:10,alignItems:"center"}}>
-            <button onClick={()=>setShowFormatGuide(o=>!o)} style={{background:"none",border:"1px solid #E0E0E0",borderRadius:3,padding:"2px 8px",fontSize:10,cursor:"pointer",color:"#888",fontFamily:"inherit"}}>?</button>
-            <button onClick={()=>setShortcutsOpen(o=>!o)} style={{background:"none",border:"1px solid #E0E0E0",borderRadius:3,padding:"2px 8px",fontSize:10,cursor:"pointer",color:"#888",fontFamily:"inherit"}}>⌘/</button>
-            <button onClick={()=>setFocusMode(o=>!o)} style={{background:"none",border:"1px solid #E0E0E0",borderRadius:3,padding:"2px 8px",fontSize:10,cursor:"pointer",color:"#888",fontFamily:"inherit"}}>⌘F</button>
-            <button onClick={()=>setDarkCanvas(o=>!o)} style={{background:darkCanvas?"#333":"none",border:"1px solid #E0E0E0",borderRadius:3,padding:"2px 8px",fontSize:10,cursor:"pointer",color:darkCanvas?"#FFF":"#888",fontFamily:"inherit"}}>◐</button>
+            <button onClick={()=>setShowFormatGuide(o=>!o)} title="Help — format guide for the current mode" style={{background:"none",border:"1px solid #E0E0E0",borderRadius:3,padding:"2px 8px",fontSize:10,cursor:"pointer",color:"#888",fontFamily:"inherit"}}>?</button>
+            <button onClick={()=>setShortcutsOpen(o=>!o)} title="Keyboard shortcuts" style={{background:"none",border:"1px solid #E0E0E0",borderRadius:3,padding:"2px 8px",fontSize:10,cursor:"pointer",color:"#888",fontFamily:"inherit"}}>⌘/</button>
+            <button onClick={()=>setFocusMode(o=>!o)} title="Focus Mode — hides every panel and toolbar so only the page you're writing on is visible" style={{background:"none",border:"1px solid #E0E0E0",borderRadius:3,padding:"2px 8px",fontSize:10,cursor:"pointer",color:"#888",fontFamily:"inherit"}}>⌘F</button>
+            <button onClick={()=>setDarkCanvas(o=>!o)} title="Dark mode — darkens the page and surrounding canvas" style={{background:darkCanvas?"#333":"none",border:"1px solid #E0E0E0",borderRadius:3,padding:"2px 8px",fontSize:10,cursor:"pointer",color:darkCanvas?"#FFF":"#888",fontFamily:"inherit"}}>◐</button>
             <div style={{position:"relative"}}>
               <button onClick={()=>setTextScaleMenuOpen(o=>!o)} title="Text size (accessibility)" style={{background:textScaleMenuOpen?"#333":"none",border:"1px solid #E0E0E0",borderRadius:3,padding:"2px 8px",cursor:"pointer",color:textScaleMenuOpen?"#FFF":"#888",fontFamily:"inherit",display:"flex",alignItems:"baseline",gap:1}}>
                 <span style={{fontSize:8}}>A</span><span style={{fontSize:11}}>A</span><span style={{fontSize:14}}>A</span>
