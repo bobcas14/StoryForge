@@ -804,7 +804,7 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
     return()=>cancelAnimationFrame(raf);
   },[lines.length]);
 
-  // ── SELECT ALL: copy full text, exit on any other interaction ────────────
+  // ── SELECT ALL: copy full text, delete-all, exit on any other interaction ──
   useEffect(()=>{
     if(!selectAllActive) return;
     const onCopy=(e)=>{
@@ -813,7 +813,20 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
       e.preventDefault();
     };
     const exit=(e)=>{
-      if((e.ctrlKey||e.metaKey)&&e.key==="c") return; // let Copy fire first
+      if((e.ctrlKey||e.metaKey)&&(e.key==="c"||e.key==="a")) return; // let Copy fire, and don't cancel out a repeat/held Select All press
+      if(e.key==="Backspace"||e.key==="Delete"){
+        e.preventDefault();
+        setSelectAllActive(false);
+        if(!window.confirm("Delete the entire script? You can undo this with Ctrl/Cmd+Z.")) return;
+        const blank=[{id:Date.now(),text:"",mode:"action"}];
+        captureSnapshot(blank,{0:""});
+        lastSnapshotTimeRef.current=Date.now();
+        textCache.current={0:""};
+        setLines(blank);
+        onUpdateContent(blank);
+        pageMapRef.current=computePageMap(blank);
+        return;
+      }
       setSelectAllActive(false);
     };
     document.addEventListener("copy",onCopy);
@@ -961,6 +974,14 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
       // highlight every line and intercept Copy to build the full text,
       // which is what "Select All" is actually expected to do.
       setSelectAllActive(true);
+      return;
+    }
+    if((e.key==="Backspace"||e.key==="Delete")&&selectAllActive){
+      // While Select All is active, its own document-level Backspace/
+      // Delete handler above is authoritative — no per-line handling
+      // (including ⌘Backspace right below, since e.key is still
+      // "Backspace" regardless of the modifier held) should also run for
+      // the same keypress.
       return;
     }
     // ── ⌘Backspace: delete entire line regardless of content ──────────────
