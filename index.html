@@ -88,6 +88,27 @@ const css = {
     letterSpacing:"0.12em",display:"block",marginBottom:6},
 };
 
+// ── SUPABASE ─────────────────────────────────────────────────────────────
+// Real accounts, replacing the old per-browser localStorage-only "accounts"
+// that couldn't be reached from a second device. The anon/public key below
+// is safe to ship in client-side code by design — it's what Supabase's own
+// row-level-security rules are built to be used with from a browser.
+const SUPABASE_URL="https://mtueeslwgcmbbcccplwh.supabase.co";
+const SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im10dWVlc2x3Z2NtYmJjY2NwbHdoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMyMTM2MTAsImV4cCI6MjA5ODc4OTYxMH0._G88HRCqsXEQI_hFqJBc8fESnjkoB1IuuFQmilcRq3k";
+
+const loadScript=(src)=>new Promise((resolve,reject)=>{
+  if(document.querySelector(`script[src="${src}"]`)){resolve();return;}
+  const s=document.createElement("script");s.src=src;s.onload=resolve;s.onerror=reject;document.head.appendChild(s);
+});
+
+let _supabasePromise=null;
+const getSupabase=()=>{
+  if(_supabasePromise) return _supabasePromise;
+  _supabasePromise=loadScript("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js")
+    .then(()=>window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY));
+  return _supabasePromise;
+};
+
 const LS = {
   get:(k,d)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch{return d;}},
   set:(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch{}},
@@ -1903,21 +1924,39 @@ function AuthScreen({onAuth,initialMode="signin",onHome}){
   const [email,setEmail]=useState("");
   const [pass,setPass]=useState("");
   const [err,setErr]=useState("");
-  const submit=()=>{
-    setErr("");
+  const [info,setInfo]=useState("");
+  const [busy,setBusy]=useState(false);
+  const submit=async()=>{
+    setErr("");setInfo("");
     if(!email.trim()||!pass.trim()){setErr("Email and password required.");return;}
-    const key=`sf_user_${email.trim().toLowerCase()}`;
-    if(mode==="signup"){
-      if(!name.trim()){setErr("Name required.");return;}
-      if(LS.get(key,null)){setErr("Account already exists. Sign in instead.");return;}
-      const user={name:name.trim(),email:email.trim().toLowerCase(),pass};
-      LS.set(key,user);onAuth(user);
-    } else {
-      const user=LS.get(key,null);
-      if(!user){setErr("No account found. Sign up instead.");return;}
-      if(user.pass!==pass){setErr("Incorrect password.");return;}
-      onAuth(user);
+    setBusy(true);
+    try{
+      const supabase=await getSupabase();
+      if(mode==="signup"){
+        if(!name.trim()){setErr("Name required.");setBusy(false);return;}
+        const {data,error}=await supabase.auth.signUp({
+          email:email.trim().toLowerCase(),password:pass,
+          options:{data:{name:name.trim()}},
+        });
+        if(error){setErr(error.message);setBusy(false);return;}
+        if(data.user&&!data.session){
+          // Project has "Confirm email" turned on — signUp succeeded but
+          // there's no session yet until they click the link Supabase just
+          // emailed them. Tell them plainly rather than silently doing
+          // nothing that looks like it worked.
+          setInfo("Account created — check your email to confirm it, then sign in.");
+          setBusy(false);return;
+        }
+        onAuth(data.user);
+      }else{
+        const {data,error}=await supabase.auth.signInWithPassword({email:email.trim().toLowerCase(),password:pass});
+        if(error){setErr(error.message==="Invalid login credentials"?"Incorrect email or password.":error.message);setBusy(false);return;}
+        onAuth(data.user);
+      }
+    }catch(e){
+      setErr("Couldn't reach the server — check your connection and try again.");
     }
+    setBusy(false);
   };
   return(
     <div style={{minHeight:"100vh",background:"#FFF",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",position:"relative"}}>
@@ -1929,7 +1968,8 @@ function AuthScreen({onAuth,initialMode="signin",onHome}){
         <div style={{marginBottom:14}}><label style={css.label}>Email</label><input value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@email.com" style={css.input} onKeyDown={e=>e.key==="Enter"&&submit()}/></div>
         <div style={{marginBottom:20}}><label style={css.label}>Password</label><input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="••••••••" style={css.input} onKeyDown={e=>e.key==="Enter"&&submit()}/></div>
         {err&&<p style={{margin:"0 0 14px",fontSize:12,color:"#888"}}>{err}</p>}
-        <button onClick={submit} style={{width:"100%",padding:"11px",background:"#000",color:"#FFF",border:"none",borderRadius:4,cursor:"pointer",fontFamily:"inherit",fontWeight:700,fontSize:14}}>{mode==="signin"?"Sign in":"Create account"}</button>
+        {info&&<p style={{margin:"0 0 14px",fontSize:12,color:"#4A4"}}>{info}</p>}
+        <button onClick={submit} disabled={busy} style={{width:"100%",padding:"11px",background:"#000",color:"#FFF",border:"none",borderRadius:4,cursor:busy?"wait":"pointer",fontFamily:"inherit",fontWeight:700,fontSize:14,opacity:busy?0.6:1}}>{busy?"Please wait...":mode==="signin"?"Sign in":"Create account"}</button>
         <p style={{margin:"16px 0 0",fontSize:12,color:"#AAA",textAlign:"center"}}>
           {mode==="signin"?"No account? ":"Have an account? "}
           <button onClick={()=>{setMode(mode==="signin"?"signup":"signin");setErr("");}} style={{background:"none",border:"none",cursor:"pointer",color:"#000",fontWeight:700,fontSize:12,fontFamily:"inherit",padding:0}}>{mode==="signin"?"Sign up":"Sign in"}</button>
@@ -3650,24 +3690,45 @@ function Root(){
   // Session policy (per explicit instruction): signed out after 30 minutes
   // of no mouse/keyboard activity, AND signed out immediately if the page
   // is closed, refreshed, or navigated away from — logging back in is
-  // required each time you return. See the beforeunload handler below for
-  // the close/leave case; this timeout handles the "stayed open, went
-  // quiet" case.
+  // required each time you return. Now backed by a real Supabase session
+  // instead of a per-browser localStorage flag, so "signed in" actually
+  // means something a server can verify — this is what makes signing in
+  // from a second device work instead of saying "no account found".
   const SESSION_TIMEOUT=30*60*1000; // 30 minutes
-  const loadUser=()=>{
-    const saved=LS.get("sf_current_user",null);if(!saved) return null;
-    const lastActive=LS.get("sf_last_active",0);
-    if(Date.now()-lastActive>SESSION_TIMEOUT){LS.set("sf_current_user",null);LS.set("sf_last_active",null);return null;}
-    return saved;
-  };
+  // Supabase's real user object nests custom fields (like name) under
+  // user_metadata rather than at the top level. The rest of the app
+  // already expects user.name/user.email directly (avatar initials,
+  // Dashboard header, etc.) — normalizing once here means none of those
+  // other places need to change.
+  const normalizeUser=(su)=>su?{id:su.id,email:su.email,name:su.user_metadata?.name||su.email}:null;
   const [screen,setScreen]=useState("landing");
   const [profile,setProfile]=useState(()=>LS.get("sf_profile",null));
-  const [user,setUser]=useState(()=>loadUser());
+  const [user,setUser]=useState(null);
+  const [authLoading,setAuthLoading]=useState(true);
   const [activeProject,setActiveProject]=useState(null);
   const [dashSave,setDashSave]=useState(null);
   const [dashProjects,setDashProjects]=useState([]);
   const [authMode,setAuthMode]=useState("signin");
   const [pendingImportOnOpen,setPendingImportOnOpen]=useState(false);
+
+  // Bootstrap: check Supabase for a real, already-valid session on load
+  // (e.g. you signed in yesterday and haven't hit the inactivity timeout),
+  // then keep listening for changes — sign-out from another tab, a token
+  // refresh, etc. — so this component's own `user` state never drifts out
+  // of sync with what Supabase actually thinks is true.
+  useEffect(()=>{
+    let unsub=null;
+    getSupabase().then(async(supabase)=>{
+      const {data}=await supabase.auth.getSession();
+      setUser(normalizeUser(data?.session?.user));
+      setAuthLoading(false);
+      const {data:sub}=supabase.auth.onAuthStateChange((_event,session)=>{
+        setUser(normalizeUser(session?.user));
+      });
+      unsub=sub;
+    }).catch(()=>setAuthLoading(false));
+    return()=>{if(unsub) unsub.subscription.unsubscribe();};
+  },[]);
 
   useEffect(()=>{
     const touch=()=>LS.set("sf_last_active",Date.now());touch();
@@ -3681,12 +3742,12 @@ function Root(){
     document.addEventListener("visibilitychange",h);return()=>document.removeEventListener("visibilitychange",h);
   },[user]);
 
-  // Log out on close/leave. Written straight to localStorage rather than
-  // through setUser/signOut — the page is on its way out, and a scheduled
-  // React state update isn't guaranteed to run before it actually unloads,
-  // but a plain synchronous localStorage write is.
+  // Log out on close/leave. This now calls the real Supabase sign-out
+  // (fire-and-forget — a page that's unloading can't reliably wait for a
+  // network response) instead of just clearing a local flag, so the
+  // server-side session is actually invalidated, not just hidden locally.
   useEffect(()=>{
-    const onLeave=()=>{if(user){LS.set("sf_current_user",null);LS.set("sf_last_active",null);}};
+    const onLeave=()=>{if(user){getSupabase().then(supabase=>supabase.auth.signOut()).catch(()=>{});}};
     window.addEventListener("beforeunload",onLeave);
     return()=>window.removeEventListener("beforeunload",onLeave);
   },[user]);
@@ -3695,8 +3756,16 @@ function Root(){
   const enterSignIn=()=>{if(!user){setAuthMode("signin");setScreen("auth");return;}setScreen("dashboard");};
   const save=(p)=>{setProfile(p);LS.set("sf_profile",p);setScreen("dashboard");};
   const updateProfile=(changes)=>{const p={...profile,...changes};setProfile(p);LS.set("sf_profile",p);};
-  const handleAuth=(u)=>{setUser(u);LS.set("sf_current_user",u);LS.set("sf_last_active",Date.now());if(!profile){setScreen("setup");return;}setScreen("dashboard");};
-  const signOut=()=>{LS.set("sf_current_user",null);LS.set("sf_last_active",null);setUser(null);setActiveProject(null);setScreen("landing");};
+  const handleAuth=(su)=>{
+    const u=normalizeUser(su);
+    setUser(u);LS.set("sf_last_active",Date.now());
+    if(!profile){setScreen("setup");return;}
+    setScreen("dashboard");
+  };
+  const signOut=()=>{
+    getSupabase().then(supabase=>supabase.auth.signOut()).catch(()=>{});
+    LS.set("sf_last_active",null);setUser(null);setActiveProject(null);setScreen("landing");
+  };
   const openProject=(p,saveFn,allProjects)=>{setActiveProject(p);setDashSave(()=>saveFn);setDashProjects(allProjects);setScreen("app");};
   const newProject=(saveFn,allProjects,openImport)=>{
     if(!profile||!user) return;
