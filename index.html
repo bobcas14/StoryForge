@@ -582,6 +582,12 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
   const [contextMenu,setContextMenu]=useState(null);
   const [inlineNote,setInlineNote]=useState(null);
   const [selectAllActive,setSelectAllActive]=useState(false);
+  // Shift+click range selection — same idea as Select All (a visual
+  // highlight + Copy/Delete support, since separate <textarea> elements
+  // can't share a real native browser selection), just scoped to a
+  // clicked-to-clicked range instead of the whole document.
+  const [rangeSelection,setRangeSelection]=useState(null); // {start,end} inclusive line indices
+  const selectionAnchorRef=useRef(0);
 
   const refs=useRef({});
   const textCache=useRef({});
@@ -839,6 +845,54 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
     };
   },[selectAllActive,lines]);
 
+  // ── SHIFT+CLICK RANGE: copy the range, delete the range, exit on other interaction ──
+  useEffect(()=>{
+    if(!rangeSelection) return;
+    const {start,end}=rangeSelection;
+    const onCopy=(e)=>{
+      const text=lines.slice(start,end+1).map((l,i)=>textCache.current[start+i]??l.text??"").join("\n");
+      e.clipboardData.setData("text/plain",text);
+      e.preventDefault();
+    };
+    const doDeleteRange=()=>{
+      setLines(prev=>{
+        let next=prev.filter((_,i)=>i<start||i>end);
+        if(next.length===0) next=[{id:Date.now(),text:"",mode:"action"}];
+        const newCache={};
+        next.forEach((l,i)=>{newCache[i]=textCache.current[i<start?i:i+(end-start+1)]??l.text;});
+        textCache.current=newCache;
+        captureSnapshot(next,{...newCache});
+        lastSnapshotTimeRef.current=Date.now();
+        onUpdateContent(next);
+        pageMapRef.current=computePageMap(next);
+        return next;
+      });
+    };
+    const exit=(e)=>{
+      if(e.type==="mousedown"&&e.shiftKey) return; // let this click extend the range instead of clearing it
+      if(e.type==="keydown"){
+        if((e.ctrlKey||e.metaKey)&&e.key==="c") return; // let Copy fire first
+        if(e.key==="Backspace"||e.key==="Delete"){
+          e.preventDefault();
+          const count=end-start+1;
+          setRangeSelection(null);
+          if(count>20&&!window.confirm(`Delete ${count} lines?`)) return;
+          doDeleteRange();
+          return;
+        }
+      }
+      setRangeSelection(null);
+    };
+    document.addEventListener("copy",onCopy);
+    document.addEventListener("keydown",exit);
+    document.addEventListener("mousedown",exit);
+    return()=>{
+      document.removeEventListener("copy",onCopy);
+      document.removeEventListener("keydown",exit);
+      document.removeEventListener("mousedown",exit);
+    };
+  },[rangeSelection,lines]);
+
   useEffect(()=>{
     if(!focusMode) return;
     const el=wrapperRefs.current[curLine];
@@ -973,10 +1027,11 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
       // native way to visually select across all of them at once. We
       // highlight every line and intercept Copy to build the full text,
       // which is what "Select All" is actually expected to do.
+      setRangeSelection(null);
       setSelectAllActive(true);
       return;
     }
-    if((e.key==="Backspace"||e.key==="Delete")&&selectAllActive){
+    if((e.key==="Backspace"||e.key==="Delete")&&(selectAllActive||rangeSelection)){
       // While Select All is active, its own document-level Backspace/
       // Delete handler above is authoritative — no per-line handling
       // (including ⌘Backspace right below, since e.key is still
@@ -1357,7 +1412,7 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
                       </div>
                     );
                   })()}
-                  <div ref={el=>{wrapperRefs.current[idx]=el;}} style={{position:"relative",...wrapperStyle(line.mode,format),...(selectAllActive?{background:darkCanvas?"rgba(255,255,255,0.12)":"rgba(0,0,0,0.07)"}:{})}}>
+                  <div ref={el=>{wrapperRefs.current[idx]=el;}} style={{position:"relative",...wrapperStyle(line.mode,format),...((selectAllActive||(rangeSelection&&idx>=rangeSelection.start&&idx<=rangeSelection.end))?{background:darkCanvas?"rgba(255,255,255,0.12)":"rgba(0,0,0,0.07)"}:{})}}>
                     <textarea
                       ref={el=>{refs.current[idx]=el;if(el) autoGrowOnMount(el,line.text);}}
                       defaultValue={line.text}
@@ -1381,6 +1436,24 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
                               setTimeout(()=>setPopup({visible:true,x:r.left,y:r.bottom+6,query:name,matches}),80);
                             }
                           }
+                        }
+                      }}
+                      onMouseDown={e=>{
+                        // A shift+click on the SAME line as the anchor is
+                        // just normal native browser text selection within
+                        // one textarea — not a multi-line range. Only a
+                        // shift+click on a DIFFERENT line sets up the
+                        // custom range; same-line falls through untouched
+                        // so native selection behaves exactly as expected.
+                        if(e.shiftKey&&idx!==selectionAnchorRef.current){
+                          e.preventDefault(); // this is a selection gesture, not a "place cursor here" click
+                          setSelectAllActive(false);
+                          const start=Math.min(selectionAnchorRef.current,idx);
+                          const end=Math.max(selectionAnchorRef.current,idx);
+                          setRangeSelection({start,end});
+                        }else if(!e.shiftKey){
+                          setRangeSelection(null);
+                          selectionAnchorRef.current=idx;
                         }
                       }}
                       onFocus={()=>{
