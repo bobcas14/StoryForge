@@ -839,7 +839,7 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
     };
     const exit=(e)=>{
       if(e.type==="keydown"){
-        if((e.ctrlKey||e.metaKey)&&e.key==="c") return; // let Copy fire first
+        if((e.ctrlKey||e.metaKey)&&(e.key==="c"||e.key==="a")) return; // let Copy fire, and don't cancel out a repeat/held Select All press
         // Bug fix: Backspace/Delete used to just silently turn the
         // highlight off with no actual deletion — since there's no real
         // browser selection across separate line textareas, the keypress
@@ -1443,6 +1443,41 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
                         if(onCharFocus&&lines[idx]?.mode==="character")
                           onCharFocus((textCache.current[idx]||lines[idx]?.text||"").trim());
                         else if(onCharFocus) onCharFocus("");
+                      }}
+                      onPaste={e=>{
+                        const text=e.clipboardData.getData("text/plain");
+                        // Single-line paste (the common case) is left to the
+                        // browser's own default behavior — nothing to fix
+                        // there. Multi-line paste (e.g. dialogue copied from
+                        // another script) used to just get dumped as one
+                        // giant blob of text into this one line's textarea,
+                        // since each line here is its own separate,
+                        // structured block, not a free-form document. Now it
+                        // runs the paste through the same classifier DOCX
+                        // import already uses, splitting it into properly
+                        // moded lines instead.
+                        if(!text||!text.includes("\n")) return;
+                        e.preventDefault();
+                        const el=refs.current[idx];
+                        const before=(el?.value??textCache.current[idx]??"").slice(0,el?.selectionStart??0);
+                        const after=(el?.value??textCache.current[idx]??"").slice(el?.selectionEnd??(el?.value?.length||0));
+                        const blocks=classifyScriptText(text,format);
+                        if(blocks.length===0) return;
+                        const pasted=blocks.map((b,i)=>({id:Date.now()+i,text:b.text,mode:b.mode||"action"}));
+                        if(before.trim()) pasted[0]={...pasted[0],text:before+pasted[0].text};
+                        if(after.trim()) pasted[pasted.length-1]={...pasted[pasted.length-1],text:pasted[pasted.length-1].text+after};
+                        setLines(prev=>{
+                          const updated=[...prev.slice(0,idx),...pasted,...prev.slice(idx+1)];
+                          const newCache={};
+                          updated.forEach((l,i)=>{newCache[i]=l.text;});
+                          textCache.current=newCache;
+                          captureSnapshot(updated,{...newCache});
+                          lastSnapshotTimeRef.current=Date.now();
+                          onUpdateContent(updated);
+                          pageMapRef.current=computePageMap(updated);
+                          return updated;
+                        });
+                        focusLine(idx+pasted.length-1,true);
                       }}
                       onChange={e=>{
                         autoGrow(e.target);
