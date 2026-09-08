@@ -81,6 +81,25 @@ const GENRES = [
   "Political Drama","Anthology",
 ];
 
+// A genre dropdown with an "Other" option that reveals a free-text field —
+// for whatever isn't on the curated list. Used everywhere a genre is
+// picked, so it only needs to be written correctly once.
+function GenreSelect({value,onChange,style}){
+  const [showCustom,setShowCustom]=useState(()=>!!value&&!GENRES.includes(value));
+  return(
+    <div>
+      <select value={showCustom?"__other__":(value||GENRES[0])} onChange={e=>{
+        if(e.target.value==="__other__"){setShowCustom(true);onChange("");}
+        else{setShowCustom(false);onChange(e.target.value);}
+      }} style={style}>
+        {GENRES.map(g=><option key={g} value={g}>{g}</option>)}
+        <option value="__other__">Other…</option>
+      </select>
+      {showCustom&&<input value={value||""} onChange={e=>onChange(e.target.value)} placeholder="Type your genre..." style={{...style,marginTop:6}} autoFocus/>}
+    </div>
+  );
+}
+
 const css = {
   input:{background:"#FFFFFF",border:"1px solid #D0D0D0",borderRadius:4,color:"#0A0A0A",
     padding:"9px 12px",width:"100%",outline:"none",fontSize:13,fontFamily:"inherit",boxSizing:"border-box"},
@@ -582,6 +601,12 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
   const [contextMenu,setContextMenu]=useState(null);
   const [inlineNote,setInlineNote]=useState(null);
   const [selectAllActive,setSelectAllActive]=useState(false);
+  // Shift+click range selection — same idea as Select All (a visual
+  // highlight + Copy/Delete support, since separate <textarea> elements
+  // can't share a real native browser selection), just scoped to a
+  // clicked-to-clicked range instead of the whole document.
+  const [rangeSelection,setRangeSelection]=useState(null); // {start,end} inclusive line indices
+  const selectionAnchorRef=useRef(0);
 
   const refs=useRef({});
   const textCache=useRef({});
@@ -804,7 +829,7 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
     return()=>cancelAnimationFrame(raf);
   },[lines.length]);
 
-  // ── SELECT ALL: copy full text, exit on any other interaction ────────────
+  // ── SELECT ALL: copy full text, delete-all, exit on any other interaction ──
   useEffect(()=>{
     if(!selectAllActive) return;
     const onCopy=(e)=>{
@@ -813,7 +838,30 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
       e.preventDefault();
     };
     const exit=(e)=>{
-      if((e.ctrlKey||e.metaKey)&&e.key==="c") return; // let Copy fire first
+      if(e.type==="keydown"){
+        if((e.ctrlKey||e.metaKey)&&e.key==="c") return; // let Copy fire first
+        // Bug fix: Backspace/Delete used to just silently turn the
+        // highlight off with no actual deletion — since there's no real
+        // browser selection across separate line textareas, the keypress
+        // then fell through to whatever line still had focus and ran that
+        // line's normal Backspace-merges-with-previous-line behavior,
+        // which looked like lines randomly combining and vanishing. Now it
+        // actually clears the whole script, the way Select All + Delete
+        // should.
+        if(e.key==="Backspace"||e.key==="Delete"){
+          e.preventDefault();
+          setSelectAllActive(false);
+          if(!window.confirm("Delete the entire script? You can undo this with Ctrl/Cmd+Z.")) return;
+          const blank=[{id:Date.now(),text:"",mode:"action"}];
+          captureSnapshot(blank,{0:""});
+          lastSnapshotTimeRef.current=Date.now();
+          textCache.current={0:""};
+          setLines(blank);
+          onUpdateContent(blank);
+          pageMapRef.current=computePageMap(blank);
+          return;
+        }
+      }
       setSelectAllActive(false);
     };
     document.addEventListener("copy",onCopy);
@@ -825,6 +873,54 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
       document.removeEventListener("mousedown",exit);
     };
   },[selectAllActive,lines]);
+
+  // ── SHIFT+CLICK RANGE: copy the range, delete the range, exit on other interaction ──
+  useEffect(()=>{
+    if(!rangeSelection) return;
+    const {start,end}=rangeSelection;
+    const onCopy=(e)=>{
+      const text=lines.slice(start,end+1).map((l,i)=>textCache.current[start+i]??l.text??"").join("\n");
+      e.clipboardData.setData("text/plain",text);
+      e.preventDefault();
+    };
+    const doDeleteRange=()=>{
+      setLines(prev=>{
+        let next=prev.filter((_,i)=>i<start||i>end);
+        if(next.length===0) next=[{id:Date.now(),text:"",mode:"action"}];
+        const newCache={};
+        next.forEach((l,i)=>{newCache[i]=textCache.current[i<start?i:i+(end-start+1)]??l.text;});
+        textCache.current=newCache;
+        captureSnapshot(next,{...newCache});
+        lastSnapshotTimeRef.current=Date.now();
+        onUpdateContent(next);
+        pageMapRef.current=computePageMap(next);
+        return next;
+      });
+    };
+    const exit=(e)=>{
+      if(e.type==="mousedown"&&e.shiftKey) return; // let this click extend the range instead of clearing it
+      if(e.type==="keydown"){
+        if((e.ctrlKey||e.metaKey)&&e.key==="c") return; // let Copy fire first
+        if(e.key==="Backspace"||e.key==="Delete"){
+          e.preventDefault();
+          const count=end-start+1;
+          setRangeSelection(null);
+          if(count>20&&!window.confirm(`Delete ${count} lines?`)) return;
+          doDeleteRange();
+          return;
+        }
+      }
+      setRangeSelection(null);
+    };
+    document.addEventListener("copy",onCopy);
+    document.addEventListener("keydown",exit);
+    document.addEventListener("mousedown",exit);
+    return()=>{
+      document.removeEventListener("copy",onCopy);
+      document.removeEventListener("keydown",exit);
+      document.removeEventListener("mousedown",exit);
+    };
+  },[rangeSelection,lines]);
 
   useEffect(()=>{
     if(!focusMode) return;
@@ -947,6 +1043,7 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
       // native way to visually select across all of them at once. We
       // highlight every line and intercept Copy to build the full text,
       // which is what "Select All" is actually expected to do.
+      setRangeSelection(null);
       setSelectAllActive(true);
       return;
     }
@@ -1303,7 +1400,7 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
                       </div>
                     );
                   })()}
-                  <div ref={el=>{wrapperRefs.current[idx]=el;}} style={{position:"relative",...wrapperStyle(line.mode,format),...(selectAllActive?{background:darkCanvas?"rgba(255,255,255,0.12)":"rgba(0,0,0,0.07)"}:{})}}>
+                  <div ref={el=>{wrapperRefs.current[idx]=el;}} style={{position:"relative",...wrapperStyle(line.mode,format),...((selectAllActive||(rangeSelection&&idx>=rangeSelection.start&&idx<=rangeSelection.end))?{background:darkCanvas?"rgba(255,255,255,0.12)":"rgba(0,0,0,0.07)"}:{})}}>
                     <textarea
                       ref={el=>{refs.current[idx]=el;if(el) autoGrowOnMount(el,line.text);}}
                       defaultValue={line.text}
@@ -1327,6 +1424,18 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
                               setTimeout(()=>setPopup({visible:true,x:r.left,y:r.bottom+6,query:name,matches}),80);
                             }
                           }
+                        }
+                      }}
+                      onMouseDown={e=>{
+                        if(e.shiftKey){
+                          e.preventDefault(); // this is a selection gesture, not a "place cursor here" click
+                          setSelectAllActive(false);
+                          const start=Math.min(selectionAnchorRef.current,idx);
+                          const end=Math.max(selectionAnchorRef.current,idx);
+                          setRangeSelection({start,end});
+                        }else{
+                          setRangeSelection(null);
+                          selectionAnchorRef.current=idx;
                         }
                       }}
                       onFocus={()=>{
@@ -1923,6 +2032,7 @@ function AuthScreen({onAuth,initialMode="signin",onHome}){
   const [name,setName]=useState("");
   const [email,setEmail]=useState("");
   const [pass,setPass]=useState("");
+  const [pass2,setPass2]=useState("");
   const [err,setErr]=useState("");
   const [info,setInfo]=useState("");
   const [busy,setBusy]=useState(false);
@@ -1934,6 +2044,7 @@ function AuthScreen({onAuth,initialMode="signin",onHome}){
       const supabase=await getSupabase();
       if(mode==="signup"){
         if(!name.trim()){setErr("Name required.");setBusy(false);return;}
+        if(pass!==pass2){setErr("Passwords don't match.");setBusy(false);return;}
         const {data,error}=await supabase.auth.signUp({
           email:email.trim().toLowerCase(),password:pass,
           options:{data:{name:name.trim()}},
@@ -1966,7 +2077,8 @@ function AuthScreen({onAuth,initialMode="signin",onHome}){
         <h2 style={{margin:"0 0 28px",fontSize:22,fontWeight:900,color:"#000"}}>{mode==="signin"?"Sign in":"Create account"}</h2>
         {mode==="signup"&&<div style={{marginBottom:14}}><label style={css.label}>Name</label><input value={name} onChange={e=>setName(e.target.value)} placeholder="B. Hill" style={css.input} onKeyDown={e=>e.key==="Enter"&&submit()}/></div>}
         <div style={{marginBottom:14}}><label style={css.label}>Email</label><input value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@email.com" style={css.input} onKeyDown={e=>e.key==="Enter"&&submit()}/></div>
-        <div style={{marginBottom:20}}><label style={css.label}>Password</label><input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="••••••••" style={css.input} onKeyDown={e=>e.key==="Enter"&&submit()}/></div>
+        <div style={{marginBottom:mode==="signup"?14:20}}><label style={css.label}>Password</label><input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="••••••••" style={css.input} onKeyDown={e=>e.key==="Enter"&&submit()}/></div>
+        {mode==="signup"&&<div style={{marginBottom:20}}><label style={css.label}>Confirm Password</label><input type="password" value={pass2} onChange={e=>setPass2(e.target.value)} placeholder="••••••••" style={css.input} onKeyDown={e=>e.key==="Enter"&&submit()}/></div>}
         {err&&<p style={{margin:"0 0 14px",fontSize:12,color:"#888"}}>{err}</p>}
         {info&&<p style={{margin:"0 0 14px",fontSize:12,color:"#4A4"}}>{info}</p>}
         <button onClick={submit} disabled={busy} style={{width:"100%",padding:"11px",background:"#000",color:"#FFF",border:"none",borderRadius:4,cursor:busy?"wait":"pointer",fontFamily:"inherit",fontWeight:700,fontSize:14,opacity:busy?0.6:1}}>{busy?"Please wait...":mode==="signin"?"Sign in":"Create account"}</button>
@@ -2071,9 +2183,9 @@ function Dashboard({user,onOpen,onNew,onSignOut}){
   );
 }
 
-function Setup({existing,onSave}){
+function Setup({existing,onSave,defaultName}){
   const [step,setStep]=useState(0);
-  const [p,setP]=useState(existing||{name:"",format:"film",genre:"Dark Fantasy",genres:[],styles:[]});
+  const [p,setP]=useState(existing||{name:defaultName||"",format:"film",genre:"Dark Fantasy",genres:[],styles:[]});
   const upd=(k,v)=>setP(prev=>({...prev,[k]:v}));
   const tog=(k,v)=>setP(prev=>({...prev,[k]:prev[k].includes(v)?prev[k].filter(x=>x!==v):[...prev[k],v]}));
   const STYLES=["Cinematic","Literary","Fast-paced","Dialogue-driven","Minimalist","Atmospheric"];
@@ -2087,7 +2199,7 @@ function Setup({existing,onSave}){
         </div>
         <div>
           <label style={css.label}>Default Genre</label>
-          <select value={p.genre} onChange={e=>upd("genre",e.target.value)} style={css.input}>{GENRES.map(g=><option key={g}>{g}</option>)}</select>
+          <GenreSelect value={p.genre} onChange={v=>upd("genre",v)} style={css.input}/>
         </div>
       </div>
     ),ok:true},
@@ -2754,7 +2866,7 @@ function ImportModal({profile,onImport,onClose}){
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
             <div><label style={css.label}>Project title</label><input value={title} onChange={e=>setTitle(e.target.value)} style={css.input}/></div>
             <div><label style={css.label}>Format</label><select value={fmt} onChange={e=>setFmt(e.target.value)} style={{...css.input,fontSize:12}}>{FORMATS.map(f=><option key={f.id} value={f.id}>{f.label}</option>)}</select></div>
-            <div><label style={css.label}>Genre</label><select value={genre} onChange={e=>setGenre(e.target.value)} style={{...css.input,fontSize:12}}>{GENRES.map(g=><option key={g}>{g}</option>)}</select></div>
+            <div><label style={css.label}>Genre</label><GenreSelect value={genre} onChange={setGenre} style={{...css.input,fontSize:12}}/></div>
           </div>
           {pendingLines&&(uncertainLines.length>0||(pendingChars&&pendingChars.length>0))&&(
             <div style={{background:"#FAFAFA",border:"1px solid #E0E0E0",borderRadius:6,padding:16}}>
@@ -3589,9 +3701,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
                   </div>
                   <div>
                     <label style={css.label}>Default Genre</label>
-                    <select value={profile.genre||"Drama"} onChange={e=>{onUpdateProfile&&onUpdateProfile({genre:e.target.value});}} style={{...css.input,fontSize:13}}>
-                      {GENRES.map(g=><option key={g}>{g}</option>)}
-                    </select>
+                    <GenreSelect value={profile.genre||"Drama"} onChange={v=>{onUpdateProfile&&onUpdateProfile({genre:v});}} style={{...css.input,fontSize:13}}/>
                   </div>
                   <div>
                     <label style={css.label}>Writing Styles</label>
@@ -3798,7 +3908,7 @@ function Root(){
 
   if(screen==="landing") return <Landing onStart={enter} onSignIn={enterSignIn} hasProfile={!!profile} user={user}/>;
   if(screen==="auth") return <AuthScreen onAuth={handleAuth} initialMode={authMode} onHome={()=>setScreen("landing")}/>;
-  if(screen==="setup") return <Setup existing={profile} onSave={save}/>;
+  if(screen==="setup") return <Setup existing={profile} onSave={save} defaultName={user?.name}/>;
   if(screen==="dashboard"&&user) return <Dashboard user={user} onOpen={openProject} onNew={newProject} onSignOut={signOut}/>;
   return <App
     profile={profile||{name:user?.name||"",format:"film",genre:"Dark Fantasy",genres:[],styles:[]}}
