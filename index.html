@@ -936,7 +936,20 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
 
     if(e.altKey&&MODE_SHORTCUTS[e.key]){
       e.preventDefault();
-      setLines(prev=>prev.map((l,i)=>i===idx?{...l,mode:MODE_SHORTCUTS[e.key]}:l));
+      // Bug fix: mode changes via this shortcut were never captured as
+      // their own undo checkpoint (only typing itself was, on a timer).
+      // If a mode change and some other edit happened close together in
+      // time with no snapshot landing in between, undoing the other edit
+      // would silently jump back past the mode change too, with no visible
+      // connection between the two — exactly what looked like "I undid one
+      // thing and something unrelated changed back with it."
+      setLines(prev=>{
+        const next=prev.map((l,i)=>i===idx?{...l,mode:MODE_SHORTCUTS[e.key]}:l);
+        captureSnapshot(next,{...textCache.current});
+        lastSnapshotTimeRef.current=Date.now();
+        onUpdateContent(next);
+        return next;
+      });
       showPill(refs.current[idx]);
       return;
     }
@@ -1031,7 +1044,15 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
       e.preventDefault();
       const ci=cycle.indexOf(lineMode);
       const nextMode=cycle[(ci+1)%cycle.length];
-      setLines(prev=>prev.map((l,i)=>i===idx?{...l,mode:nextMode}:l));
+      // Same fix as the Alt+number shortcut above — this never captured
+      // its own undo checkpoint either.
+      setLines(prev=>{
+        const next=prev.map((l,i)=>i===idx?{...l,mode:nextMode}:l);
+        captureSnapshot(next,{...textCache.current});
+        lastSnapshotTimeRef.current=Date.now();
+        onUpdateContent(next);
+        return next;
+      });
       showPill(refs.current[idx]);
       return;
     }
@@ -3788,6 +3809,19 @@ function Root(){
   const openProject=(p,saveFn,allProjects)=>{setActiveProject(p);setDashSave(()=>saveFn);setDashProjects(allProjects);setScreen("app");};
   const newProject=(saveFn,allProjects,openImport)=>{
     if(!profile||!user) return;
+    if(openImport){
+      // Bug fix: this used to create a blank "Untitled" project here
+      // regardless of which path was chosen, then separately open the
+      // Import modal — whose own onImport handler creates a second,
+      // real, properly-populated project. The first blank one was never
+      // cleaned up, just left behind as a stray duplicate. Skip creating
+      // anything here for the import path; the auto-opened Import modal
+      // below is the only thing that creates a project, once you've
+      // actually imported something.
+      setActiveProject(null);setDashSave(()=>saveFn);setDashProjects(allProjects);setScreen("app");
+      setPendingImportOnOpen(true);
+      return;
+    }
     const p={id:Date.now(),title:"Untitled",format:profile.format,genre:profile.genre,lines:[],cast:[],notes:"",moodCards:[],beats:[],sceneGallery:[],created:Date.now()};
     const updated=[p,...allProjects];
     // Write directly to LS with user-scoped key — avoids stale closure from dashSave
@@ -3795,7 +3829,6 @@ function Root(){
     LS.set(projectsKey,updated);
     saveFn(updated);
     setActiveProject(p);setDashSave(()=>saveFn);setDashProjects(updated);setScreen("app");
-    if(openImport) setPendingImportOnOpen(true);
   };
 
   if(screen==="landing") return <Landing onStart={enter} onSignIn={enterSignIn} hasProfile={!!profile} user={user}/>;
