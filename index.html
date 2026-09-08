@@ -1056,6 +1056,16 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
       setSelectAllActive(true);
       return;
     }
+    if((e.key==="Backspace"||e.key==="Delete")&&(selectAllActive||rangeSelection)){
+      // Defensive guard: while Select All or a multi-line range selection
+      // is active, their own document-level Backspace/Delete handlers are
+      // authoritative — no per-line handling (including ⌘Backspace right
+      // below, since e.key is still "Backspace" regardless of the
+      // modifier held) should also run for the same keypress. That exact
+      // double-handling is what caused lines to merge and an unrelated
+      // second line to vanish from one Delete press.
+      return;
+    }
     // ── ⌘Backspace: delete entire line regardless of content ──────────────
     if((e.ctrlKey||e.metaKey)&&e.key==="Backspace"){
       e.preventDefault();
@@ -1445,13 +1455,25 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
                         }
                       }}
                       onMouseDown={e=>{
-                        if(e.shiftKey){
+                        // Bug fix: shift+clicking twice inside the SAME
+                        // line used to still set up a "range selection"
+                        // (of exactly one line) — but two clicks in one
+                        // textarea is just normal native browser text
+                        // selection, nothing to do with the multi-line
+                        // range feature. Treating it as a range meant BOTH
+                        // the native selection-aware Backspace logic below
+                        // AND this range's own delete logic fired for the
+                        // same keypress, each mutating lines[] on top of
+                        // the other — that's what caused lines to merge
+                        // AND a second, unrelated line to get deleted from
+                        // one Delete press.
+                        if(e.shiftKey&&idx!==selectionAnchorRef.current){
                           e.preventDefault(); // this is a selection gesture, not a "place cursor here" click
                           setSelectAllActive(false);
                           const start=Math.min(selectionAnchorRef.current,idx);
                           const end=Math.max(selectionAnchorRef.current,idx);
                           setRangeSelection({start,end});
-                        }else{
+                        }else if(!e.shiftKey){
                           setRangeSelection(null);
                           selectionAnchorRef.current=idx;
                         }
