@@ -1125,7 +1125,19 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
       // This lets the writer join two incorrectly-split dialogue lines.
       const el=refs.current[idx];
       const pos=el?el.selectionStart:0;
-      if(pos===0&&curVal.length>0&&idx>0){
+      // Bug fix: this used to trigger the merge whenever the selection
+      // STARTED at position 0, without checking whether anything was
+      // actually selected. Drag-selecting from the beginning of a line
+      // (e.g. highlighting its first sentence) also has selectionStart===0
+      // — so pressing Backspace/Delete there was merging the ENTIRE line's
+      // original text into the previous line instead of just deleting the
+      // highlighted part. The highlighted text never actually got removed
+      // (it just moved, which looked like it got "copied"), and the rest
+      // of the line vanished from where it was (the "double delete").
+      // Only merge when the cursor is truly collapsed at position 0 — a
+      // real selection should just be deleted normally instead.
+      const hasSelection=el&&el.selectionStart!==el.selectionEnd;
+      if(pos===0&&curVal.length>0&&idx>0&&!hasSelection){
         e.preventDefault();
         setPopup(p=>({...p,visible:false}));
         const prevEl=refs.current[idx-1];
