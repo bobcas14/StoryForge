@@ -2108,7 +2108,7 @@ function Setup({existing,onSave}){
       </div>
       <div style={{padding:"20px 40px",borderTop:"1px solid #EBEBEB",display:"flex",justifyContent:"space-between"}}>
         <button disabled={step===0} onClick={()=>setStep(s=>s-1)} style={{padding:"10px 20px",background:"none",border:"1px solid #E8E8E8",borderRadius:4,cursor:step===0?"not-allowed":"pointer",color:"#888",fontFamily:"inherit",fontSize:13,opacity:step===0?0.3:1}}>Back</button>
-        <button disabled={!cur.ok} onClick={()=>{if(step<steps.length-1){setStep(s=>s+1);}else{LS.set("sf_profile",p);onSave(p);}}} style={{padding:"10px 28px",background:"#000",color:"#FFF",border:"none",borderRadius:4,cursor:cur.ok?"pointer":"not-allowed",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:cur.ok?1:0.3}}>{step<steps.length-1?"Continue":"Start writing"}</button>
+        <button disabled={!cur.ok} onClick={()=>{if(step<steps.length-1){setStep(s=>s+1);}else{onSave(p);}}} style={{padding:"10px 28px",background:"#000",color:"#FFF",border:"none",borderRadius:4,cursor:cur.ok?"pointer":"not-allowed",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:cur.ok?1:0.3}}>{step<steps.length-1?"Continue":"Start writing"}</button>
       </div>
     </div>
   );
@@ -3623,7 +3623,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
               updateProject(active.id,{title:form.title,draft:form.draft,writtenBy:form.writtenBy});
               const profileChanges={company:form.company,address:form.address,phone:form.phone,email:form.email};
               if(onUpdateProfile) onUpdateProfile(profileChanges);
-              else LS.set("sf_profile",{...profile,...profileChanges});
+              else if(user) LS.set(`sf_profile_${user.email}`,{...profile,...profileChanges});
               setTitlePageEditorOpen(false);
             }}
             onClose={()=>setTitlePageEditorOpen(false)}/>
@@ -3702,7 +3702,15 @@ function Root(){
   // other places need to change.
   const normalizeUser=(su)=>su?{id:su.id,email:su.email,name:su.user_metadata?.name||su.email}:null;
   const [screen,setScreen]=useState("landing");
-  const [profile,setProfile]=useState(()=>LS.get("sf_profile",null));
+  // Bug fix: profile (name, contact info, defaults) used to live under one
+  // single "sf_profile" key shared by the whole browser, completely
+  // separate from which account was actually signed in — so a brand new
+  // test account on the same browser as a real one would inherit that
+  // real account's name/address/phone/email on its title pages. Projects
+  // were already correctly scoped per-user (sf_projects_${email}); profile
+  // wasn't, which is exactly what surfaced once real multi-account sign-in
+  // actually worked. Scoped the same way projects already are below.
+  const [profile,setProfile]=useState(null);
   const [user,setUser]=useState(null);
   const [authLoading,setAuthLoading]=useState(true);
   const [activeProject,setActiveProject]=useState(null);
@@ -3710,6 +3718,10 @@ function Root(){
   const [dashProjects,setDashProjects]=useState([]);
   const [authMode,setAuthMode]=useState("signin");
   const [pendingImportOnOpen,setPendingImportOnOpen]=useState(false);
+
+  useEffect(()=>{
+    setProfile(user?LS.get(`sf_profile_${user.email}`,null):null);
+  },[user?.email]);
 
   // Bootstrap: check Supabase for a real, already-valid session on load
   // (e.g. you signed in yesterday and haven't hit the inactivity timeout),
@@ -3754,12 +3766,17 @@ function Root(){
 
   const enter=()=>{if(!user){setAuthMode("signup");setScreen("auth");return;}setScreen("dashboard");};
   const enterSignIn=()=>{if(!user){setAuthMode("signin");setScreen("auth");return;}setScreen("dashboard");};
-  const save=(p)=>{setProfile(p);LS.set("sf_profile",p);setScreen("dashboard");};
-  const updateProfile=(changes)=>{const p={...profile,...changes};setProfile(p);LS.set("sf_profile",p);};
+  const save=(p)=>{setProfile(p);if(user)LS.set(`sf_profile_${user.email}`,p);setScreen("dashboard");};
+  const updateProfile=(changes)=>{const p={...profile,...changes};setProfile(p);if(user)LS.set(`sf_profile_${user.email}`,p);};
   const handleAuth=(su)=>{
     const u=normalizeUser(su);
-    setUser(u);LS.set("sf_last_active",Date.now());
-    if(!profile){setScreen("setup");return;}
+    // Read this account's own profile directly rather than checking the
+    // `profile` state variable — that still holds whatever the previous
+    // user's (or no one's) profile was, since the effect that reloads it
+    // for the new user hasn't run yet at this exact point.
+    const userProfile=u?LS.get(`sf_profile_${u.email}`,null):null;
+    setUser(u);setProfile(userProfile);LS.set("sf_last_active",Date.now());
+    if(!userProfile){setScreen("setup");return;}
     setScreen("dashboard");
   };
   const signOut=()=>{
