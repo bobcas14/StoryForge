@@ -742,21 +742,24 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
     return()=>{if(undoRedoRef) undoRedoRef.current=null;};
   });
 
-  // Bug fix: Cmd+Z/Cmd+Shift+Z only ever worked as a per-line keydown
-  // handler, meaning it did nothing at all the moment focus wasn't on a
-  // line's textarea for any reason — which looked like "it takes a couple
-  // tries." The Undo/Redo buttons worked immediately because they don't
-  // depend on focus at all. This adds the same focus-independent fallback
-  // for the keyboard shortcut. e.defaultPrevented is checked so this never
-  // double-fires when a line textarea's own handler already took care of
-  // the same keystroke.
+  // Bug fix: Cmd+Z/Cmd+Shift+Z used to be handled in two separate places
+  // (a per-line keydown handler, plus this one as a fallback) coordinated
+  // via e.defaultPrevented — but that coordination itself turned out to be
+  // unreliable and needed two presses to actually register an undo. This
+  // is now the ONLY place Cmd+Z/Cmd+Shift+Z are handled, so there's no
+  // second handler left to interact with. It still syncs whichever line is
+  // currently focused before undoing, same as the old per-line handler did,
+  // so the last few keystrokes aren't lost.
   useEffect(()=>{
     const globalKeyHandler=(e)=>{
-      if(e.defaultPrevented) return;
-      if((e.ctrlKey||e.metaKey)&&!e.shiftKey&&e.key==="z"){
+      if(!(e.ctrlKey||e.metaKey)) return;
+      if(e.key==="z"&&!e.shiftKey){
         e.preventDefault();
+        const active=document.activeElement;
+        const idx=Object.keys(refs.current).find(k=>refs.current[k]===active);
+        if(idx!==undefined) textCache.current[idx]=active.value??textCache.current[idx]??"";
         doUndo();
-      }else if((e.ctrlKey||e.metaKey)&&(e.key==="y"||(e.shiftKey&&e.key==="z"))){
+      }else if(e.key==="y"||(e.key==="z"&&e.shiftKey)){
         e.preventDefault();
         doRedo();
       }
@@ -1086,21 +1089,6 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
           mode:lines[idx]?.mode};
         setInlineNote({x:r.left+40,y:r.bottom+8,lineIdx:idx,meta});
       }
-      return;
-    }
-
-    // ── ⌘Z: undo ──────────────────────────────────────────────────────────
-    if((e.ctrlKey||e.metaKey)&&!e.shiftKey&&e.key==="z"){
-      e.preventDefault();
-      textCache.current[idx]=refs.current[idx]?.value??textCache.current[idx]??"";
-      doUndo();
-      return;
-    }
-
-    // ── ⌘Y / ⌘⇧Z: redo ───────────────────────────────────────────────────
-    if((e.ctrlKey||e.metaKey)&&(e.key==="y"||(e.shiftKey&&e.key==="z"))){
-      e.preventDefault();
-      doRedo();
       return;
     }
 
