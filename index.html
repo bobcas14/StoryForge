@@ -1034,12 +1034,21 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
   };
 
   const focusLine=(idx,atEnd=true)=>{
-    setTimeout(()=>{
+    // Bug fix: setTimeout(fn,0) only waits one tick — it doesn't actually
+    // guarantee the browser has finished rendering React's update to the
+    // DOM by the time it fires, so refs.current[idx] could still be
+    // pointing at nothing (or the wrong node) for a just-inserted line,
+    // silently failing to move focus there at all. requestAnimationFrame
+    // guarantees the DOM has caught up first — this is the same pattern
+    // already used successfully elsewhere in this file (the scene-jump
+    // mechanism) for exactly this class of "focus a line right after it's
+    // created/scrolled into view" problem.
+    requestAnimationFrame(()=>{
       const el=refs.current[idx];
       if(!el) return;
       el.focus();
       if(atEnd){const len=el.value.length;el.setSelectionRange(len,len);}
-    },0);
+    });
   };
 
   const deleteLineAt=(idx)=>{
