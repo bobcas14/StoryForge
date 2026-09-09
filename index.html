@@ -81,6 +81,25 @@ const GENRES = [
   "Political Drama","Anthology",
 ];
 
+// A genre dropdown with an "Other" option that reveals a free-text field —
+// for whatever isn't on the curated list. Used everywhere a genre is
+// picked, so it only needs to be written correctly once.
+function GenreSelect({value,onChange,style}){
+  const [showCustom,setShowCustom]=useState(()=>!!value&&!GENRES.includes(value));
+  return(
+    <div>
+      <select value={showCustom?"__other__":(value||GENRES[0])} onChange={e=>{
+        if(e.target.value==="__other__"){setShowCustom(true);onChange("");}
+        else{setShowCustom(false);onChange(e.target.value);}
+      }} style={style}>
+        {GENRES.map(g=><option key={g} value={g}>{g}</option>)}
+        <option value="__other__">Other…</option>
+      </select>
+      {showCustom&&<input value={value||""} onChange={e=>onChange(e.target.value)} placeholder="Type your genre..." style={{...style,marginTop:6}} autoFocus/>}
+    </div>
+  );
+}
+
 const css = {
   input:{background:"#FFFFFF",border:"1px solid #D0D0D0",borderRadius:4,color:"#0A0A0A",
     padding:"9px 12px",width:"100%",outline:"none",fontSize:13,fontFamily:"inherit",boxSizing:"border-box"},
@@ -1496,6 +1515,41 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
                           onCharFocus((textCache.current[idx]||lines[idx]?.text||"").trim());
                         else if(onCharFocus) onCharFocus("");
                       }}
+                      onPaste={e=>{
+                        const text=e.clipboardData.getData("text/plain");
+                        // Single-line paste (the common case) is left to the
+                        // browser's own default behavior — nothing to fix
+                        // there. Multi-line paste (e.g. dialogue copied from
+                        // another script) used to just get dumped as one
+                        // giant blob of text into this one line's textarea,
+                        // since each line here is its own separate,
+                        // structured block, not a free-form document. Now it
+                        // runs the paste through the same classifier DOCX
+                        // import already uses, splitting it into properly
+                        // moded lines instead.
+                        if(!text||!text.includes("\n")) return;
+                        e.preventDefault();
+                        const el=refs.current[idx];
+                        const before=(el?.value??textCache.current[idx]??"").slice(0,el?.selectionStart??0);
+                        const after=(el?.value??textCache.current[idx]??"").slice(el?.selectionEnd??(el?.value?.length||0));
+                        const blocks=classifyScriptText(text,format);
+                        if(blocks.length===0) return;
+                        const pasted=blocks.map((b,i)=>({id:Date.now()+i,text:b.text,mode:b.mode||"action"}));
+                        if(before.trim()) pasted[0]={...pasted[0],text:before+pasted[0].text};
+                        if(after.trim()) pasted[pasted.length-1]={...pasted[pasted.length-1],text:pasted[pasted.length-1].text+after};
+                        setLines(prev=>{
+                          const updated=[...prev.slice(0,idx),...pasted,...prev.slice(idx+1)];
+                          const newCache={};
+                          updated.forEach((l,i)=>{newCache[i]=l.text;});
+                          textCache.current=newCache;
+                          captureSnapshot(updated,{...newCache});
+                          lastSnapshotTimeRef.current=Date.now();
+                          onUpdateContent(updated);
+                          pageMapRef.current=computePageMap(updated);
+                          return updated;
+                        });
+                        focusLine(idx+pasted.length-1,true);
+                      }}
                       onChange={e=>{
                         autoGrow(e.target);
                         const w=wrapperRefs.current[idx];
@@ -2250,7 +2304,7 @@ function Setup({existing,onSave,defaultName}){
         </div>
         <div>
           <label style={css.label}>Default Genre</label>
-          <select value={p.genre} onChange={e=>upd("genre",e.target.value)} style={css.input}>{GENRES.map(g=><option key={g}>{g}</option>)}</select>
+          <GenreSelect value={p.genre} onChange={v=>upd("genre",v)} style={css.input}/>
         </div>
       </div>
     ),ok:true},
@@ -2917,7 +2971,7 @@ function ImportModal({profile,onImport,onClose}){
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
             <div><label style={css.label}>Project title</label><input value={title} onChange={e=>setTitle(e.target.value)} style={css.input}/></div>
             <div><label style={css.label}>Format</label><select value={fmt} onChange={e=>setFmt(e.target.value)} style={{...css.input,fontSize:12}}>{FORMATS.map(f=><option key={f.id} value={f.id}>{f.label}</option>)}</select></div>
-            <div><label style={css.label}>Genre</label><select value={genre} onChange={e=>setGenre(e.target.value)} style={{...css.input,fontSize:12}}>{GENRES.map(g=><option key={g}>{g}</option>)}</select></div>
+            <div><label style={css.label}>Genre</label><GenreSelect value={genre} onChange={setGenre} style={{...css.input,fontSize:12}}/></div>
           </div>
           {pendingLines&&(uncertainLines.length>0||(pendingChars&&pendingChars.length>0))&&(
             <div style={{background:"#FAFAFA",border:"1px solid #E0E0E0",borderRadius:6,padding:16}}>
@@ -3762,9 +3816,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
                   </div>
                   <div>
                     <label style={css.label}>Default Genre</label>
-                    <select value={profile.genre||"Drama"} onChange={e=>{onUpdateProfile&&onUpdateProfile({genre:e.target.value});}} style={{...css.input,fontSize:13}}>
-                      {GENRES.map(g=><option key={g}>{g}</option>)}
-                    </select>
+                    <GenreSelect value={profile.genre||"Drama"} onChange={v=>{onUpdateProfile&&onUpdateProfile({genre:v});}} style={{...css.input,fontSize:13}}/>
                   </div>
                   <div>
                     <label style={css.label}>Writing Styles</label>
