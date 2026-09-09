@@ -1711,7 +1711,12 @@ could you point to the exact words in the source it came from? If you added
 or changed wording beyond merging structure, undo it. Also check: is every
 paragraph separated by a full blank line, and is every chapter heading on
 its own line rather than folded into prose?`;
-  const [convertInput,setConvertInput]=useState(()=>project?.lines?.map(l=>l.text).join("\n")||"");
+  // Starts empty rather than pre-filled with the whole script — converting
+  // a full manuscript in one pass is slow (the prompt has to verify every
+  // sentence word-for-word) and risks silently truncating past the 4096-
+  // token output cap. Pasting a scene or chapter at a time is the
+  // reliable way to use this.
+  const [convertInput,setConvertInput]=useState("");
   const doConvert=()=>{
     if(!convertInput.trim()) return;
     run(CONVERT_SYSTEM_PROMPT,convertInput,4096);
@@ -1776,7 +1781,7 @@ its own line rather than folded into prose?`;
         {mode==="convert"&&(
           <div>
             <label style={css.label}>Screenplay draft → novel prose</label>
-            <p style={{margin:"0 0 12px",fontSize:11.5,color:"#AAA",lineHeight:1.6}}>Strictly a format converter, not a rewriter — it restructures your exact words (character cues, quoted dialogue, and narration lines) into flowing prose paragraphs. It won't reword, embellish, or fix anything you didn't explicitly ask for; anything unclear in the source gets flagged in brackets instead of silently "fixed."</p>
+            <p style={{margin:"0 0 12px",fontSize:11.5,color:"#AAA",lineHeight:1.6}}>Strictly a format converter, not a rewriter — it restructures your exact words (character cues, quoted dialogue, and narration lines) into flowing prose paragraphs. It won't reword, embellish, or fix anything you didn't explicitly ask for; anything unclear in the source gets flagged in brackets instead of silently "fixed." Paste a scene or chapter at a time rather than a whole manuscript — it runs faster and won't risk getting cut off mid-conversion.</p>
             <textarea value={convertInput} onChange={e=>setConvertInput(e.target.value)} placeholder={`ELIX\n"The sky used to be so blue."\nI think to myself, looking up.`} style={{...css.input,resize:"vertical",minHeight:140,lineHeight:1.6,fontSize:12,fontFamily:"'Courier New',monospace"}}/>
             <button onClick={doConvert} disabled={loading||!convertInput.trim()} style={{marginTop:8,width:"100%",padding:"10px",borderRadius:4,background:"#000",color:"#FFF",border:"none",cursor:loading?"wait":"pointer",fontFamily:"inherit",fontWeight:700,fontSize:13,opacity:loading||!convertInput.trim()?0.4:1}}>{loading?"Converting...":"Convert to Prose"}</button>
           </div>
@@ -2902,9 +2907,18 @@ function ImportModal({profile,onImport,onClose}){
   const doImport=async()=>{
     if(!canImport) return;
     setError("");
-    // Plain/extracted text (paste, .txt, DOCX, or a PDF with a real text layer)
-    // is classified locally — no API call, runs instantly.
-    if(!filePayload){
+    // Bug fix: this used to check filePayload first, meaning an uploaded
+    // file always took priority even when good, usable text was already
+    // sitting in the paste box (auto-extracted, or pasted by hand as a
+    // workaround). That's backwards — local text classification is always
+    // better when the text is already available: it's free, instant, and
+    // has no page limit, unlike the AI vision path below, which does (100
+    // pages for a PDF). Checking for usable text first means a PDF with a
+    // real text layer, or text pasted manually after a failed upload,
+    // never needlessly hits that limit.
+    if(raw.trim().length>0){
+      // Plain/extracted text (paste, .txt, DOCX, or a PDF with a real text layer)
+      // is classified locally — no API call, runs instantly.
       // Strip the detected title page (title, "Written by" credit, contact
       // info) before classifying, so it doesn't end up as body lines mixed
       // in with the actual script.
@@ -2919,6 +2933,7 @@ function ImportModal({profile,onImport,onClose}){
       onImport({title,format:fmt,genre,lines,cast,writtenBy:detectedWrittenBy||undefined});
       return;
     }
+    if(!filePayload){setError("No lines found.");return;}
     // Images and scanned PDFs have no extractable text — the AI vision call
     // still handles reading + classifying those.
     setLoading(true);setStatus("AI is reading your file...");
@@ -2951,7 +2966,15 @@ function ImportModal({profile,onImport,onClose}){
       const lines=parsed.map((l,i)=>({id:Date.now()+i,text:l.text||"",mode:l.mode||"action"}));
       const cast=charNames.map((name,i)=>({id:Date.now()+5000+i,name,role:"Supporting",voice:"",notes:""}));
       onImport({title,format:fmt,genre,lines,cast});
-    }catch(err){setError("Import failed: "+(err.message||"unknown error"));setStatus("");}
+    }catch(err){
+      const msg=err.message||"unknown error";
+      if(msg.includes("PDF pages")){
+        setError("This PDF is too long for AI reading (over 100 pages). Paste the text into the box above instead — that has no page limit and runs instantly, no AI needed.");
+      }else{
+        setError("Import failed: "+msg);
+      }
+      setStatus("");
+    }
     setLoading(false);
   };
   const finalizeImport=()=>{
