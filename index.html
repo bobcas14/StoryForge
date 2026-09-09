@@ -991,6 +991,15 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
       const newCache={};
       next.forEach((_,i)=>{newCache[i]=textCache.current[i<idx?i:i+1]??"";});
       textCache.current=newCache;
+      // Bug fix: this used to change lines[] without ever calling
+      // captureSnapshot or onUpdateContent, unlike every other delete path
+      // in the file. Undo right after using this had no checkpoint for
+      // "the moment before this specific deletion" to return to, so it'd
+      // jump back further than expected — and the deletion might not even
+      // be saved until some unrelated later action happened to trigger one.
+      captureSnapshot(next,{...newCache});
+      lastSnapshotTimeRef.current=Date.now();
+      onUpdateContent(next);
       pageMapRef.current=computePageMap(next);
       return next;
     });
@@ -1245,6 +1254,17 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
           next.forEach((_,i)=>{newCache[i]=textCache.current[i<idx?i:i+1]??"";});
           newCache[idx-1]=merged;
           textCache.current=newCache;
+          // Bug fix: this relied on the trailing scheduleSync() call below
+          // to eventually capture an undo checkpoint — now 2 seconds later
+          // (since the autosave debounce was lengthened), which is an even
+          // bigger window than before where pressing Ctrl+Z immediately
+          // after a merge would jump back to whatever was captured before
+          // the merge, not the merge itself. Capturing right here,
+          // synchronously, closes that gap the same way every other
+          // delete path in the file already does.
+          captureSnapshot(next,{...newCache});
+          lastSnapshotTimeRef.current=Date.now();
+          onUpdateContent(next);
           pageMapRef.current=computePageMap(next);
           return next;
         });
@@ -1254,7 +1274,6 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
           const el=refs.current[idx-1];
           if(el){el.focus();el.setSelectionRange(joinPos,joinPos);}
         },0);
-        scheduleSync();
         return;
       }
     }
