@@ -926,6 +926,10 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
   },[curLine,focusMode]);
 
   // ── DEBOUNCED SYNC ────────────────────────────────────────────────────────
+  // 2 seconds after you stop typing — long enough that it doesn't fire on
+  // every tiny pause mid-sentence, short enough that a crash never risks
+  // losing more than a couple seconds of work. Manual save (Ctrl/Cmd+S or
+  // the Save button) still bypasses this entirely and saves instantly.
   const scheduleSync=()=>{
     clearTimeout(syncTimerRef.current);
     syncTimerRef.current=setTimeout(()=>{
@@ -937,7 +941,7 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
         pageMapRef.current=computePageMap(updated);
         return updated;
       });
-    },300);
+    },2000);
   };
 
   // ── MANUAL / EMERGENCY FLUSH ───────────────────────────────────────────────
@@ -3383,8 +3387,18 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
   const [lastSaved,setLastSaved]=useState(null);
   const [saveToast,setSaveToast]=useState(false);
   const saveToastTimerRef=useRef(null);
-  const flashSaved=()=>{
+  const lastToastTimeRef=useRef(0);
+  const flashSaved=(force)=>{
     setLastSaved(new Date());
+    // The save itself stays fast (every couple seconds) — only the visible
+    // "Saved" toast is throttled, so it doesn't flash constantly and feel
+    // naggy while you're actively writing. Nothing about how often your
+    // work actually gets saved changes here. An explicit manual save
+    // (Ctrl/Cmd+S or the Save button) always shows it immediately though —
+    // you just asked for confirmation, you should get it.
+    const now=Date.now();
+    if(!force&&now-lastToastTimeRef.current<60000) return;
+    lastToastTimeRef.current=now;
     setSaveToast(true);
     clearTimeout(saveToastTimerRef.current);
     saveToastTimerRef.current=setTimeout(()=>setSaveToast(false),2000);
@@ -3472,7 +3486,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
     if(!active) return;
     const updated={...active,lines:updatedLines};
     if(onSaveProject) onSaveProject(updated);
-    flashSaved();
+    flashSaved(true);
   };
   const manualSave=()=>{flushRef.current?.();};
   useEffect(()=>{
