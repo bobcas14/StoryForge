@@ -742,6 +742,29 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
     return()=>{if(undoRedoRef) undoRedoRef.current=null;};
   });
 
+  // Bug fix: Cmd+Z/Cmd+Shift+Z only ever worked as a per-line keydown
+  // handler, meaning it did nothing at all the moment focus wasn't on a
+  // line's textarea for any reason — which looked like "it takes a couple
+  // tries." The Undo/Redo buttons worked immediately because they don't
+  // depend on focus at all. This adds the same focus-independent fallback
+  // for the keyboard shortcut. e.defaultPrevented is checked so this never
+  // double-fires when a line textarea's own handler already took care of
+  // the same keystroke.
+  useEffect(()=>{
+    const globalKeyHandler=(e)=>{
+      if(e.defaultPrevented) return;
+      if((e.ctrlKey||e.metaKey)&&!e.shiftKey&&e.key==="z"){
+        e.preventDefault();
+        doUndo();
+      }else if((e.ctrlKey||e.metaKey)&&(e.key==="y"||(e.shiftKey&&e.key==="z"))){
+        e.preventDefault();
+        doRedo();
+      }
+    };
+    document.addEventListener("keydown",globalKeyHandler);
+    return()=>document.removeEventListener("keydown",globalKeyHandler);
+  },[lines]);
+
   // ── PAGE COUNTER ──────────────────────────────────────────────────────────
   const updateCounter=(lineIdx)=>{
     const p=pageMapRef.current.lineToPage[lineIdx]||1;
