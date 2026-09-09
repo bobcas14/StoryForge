@@ -872,6 +872,11 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
       e.preventDefault();
     };
     const exit=(e)=>{
+      // Same bug fix as the range-selection handler above — a bare
+      // modifier keydown (Meta/Control/Shift/Alt), which fires before the
+      // actual letter key, was falling through and cancelling Select All
+      // before Cmd+C could ever complete.
+      if(e.key==="Meta"||e.key==="Control"||e.key==="Shift"||e.key==="Alt") return;
       if((e.ctrlKey||e.metaKey)&&(e.key==="c"||e.key==="a")) return; // let Copy fire, and don't cancel out a repeat/held Select All press
       if(e.key==="Backspace"||e.key==="Delete"){
         e.preventDefault();
@@ -886,6 +891,16 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
         pageMapRef.current=computePageMap(blank);
         return;
       }
+      // Bug fix: any OTHER Ctrl/Cmd-held key (Cmd+Z for undo, Cmd+B, etc.)
+      // used to just fall through to this default case with no
+      // preventDefault call — which meant the browser was free to treat
+      // it as literal typed input into whichever line happened to have
+      // native text selected underneath the Select All highlight. That's
+      // how a shortcut attempt could end up silently overwriting a
+      // character name with the literal letter that was pressed. Any
+      // modifier-held key always means "this is a shortcut, not typing",
+      // so it should never be allowed through to native text entry.
+      if(e.ctrlKey||e.metaKey) e.preventDefault();
       setSelectAllActive(false);
     };
     document.addEventListener("copy",onCopy);
@@ -924,6 +939,12 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
     const exit=(e)=>{
       if(e.type==="mousedown"&&e.shiftKey) return; // let this click extend the range instead of clearing it
       if(e.type==="keydown"){
+        // Bug fix: pressing Cmd/Ctrl fires its own keydown first, with
+        // e.key === "Meta"/"Control" — before you even get to press "C".
+        // Only exempting e.key==="c" meant that bare modifier keydown
+        // wasn't recognized as "the start of a Copy", so it fell through
+        // and cleared the selection before Cmd+C could ever complete.
+        if(e.key==="Meta"||e.key==="Control"||e.key==="Shift"||e.key==="Alt") return;
         if((e.ctrlKey||e.metaKey)&&e.key==="c") return; // let Copy fire first
         if(e.key==="Backspace"||e.key==="Delete"){
           e.preventDefault();
@@ -933,6 +954,15 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
           doDeleteRange();
           return;
         }
+        // Bug fix: any OTHER Ctrl/Cmd-held key (Cmd+Z for undo, etc.) used
+        // to fall through with no preventDefault call, leaving the browser
+        // free to treat it as literal typed input into whatever line still
+        // had native text selected underneath the range highlight — that's
+        // how a keyboard shortcut attempt could silently overwrite a
+        // character name with the letter that was pressed instead of doing
+        // the shortcut. A modifier-held key always means "this is a
+        // shortcut", never typing, so it should never reach native entry.
+        if(e.ctrlKey||e.metaKey) e.preventDefault();
       }
       setRangeSelection(null);
     };
