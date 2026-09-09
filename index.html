@@ -772,13 +772,21 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
   useEffect(()=>{
     const globalKeyHandler=(e)=>{
       if(!(e.ctrlKey||e.metaKey)) return;
-      if(e.key==="z"&&!e.shiftKey){
+      const key=e.key.toLowerCase();
+      // Bug fix: this compared e.key to lowercase "z" while also requiring
+      // shiftKey to be true — but holding Shift on a letter key makes the
+      // browser report its UPPERCASE form ("Z"), never lowercase. So
+      // Cmd+Shift+Z (the standard Mac redo shortcut) could never actually
+      // match this condition through the keyboard; only Ctrl+Y or the
+      // Redo button (which calls doRedo directly) ever worked. Comparing
+      // case-insensitively fixes it for both "z" and "Z".
+      if(key==="z"&&!e.shiftKey){
         e.preventDefault();
         const active=document.activeElement;
         const idx=Object.keys(refs.current).find(k=>refs.current[k]===active);
         if(idx!==undefined) textCache.current[idx]=active.value??textCache.current[idx]??"";
         doUndo();
-      }else if(e.key==="y"||(e.key==="z"&&e.shiftKey)){
+      }else if(key==="y"||(key==="z"&&e.shiftKey)){
         e.preventDefault();
         doRedo();
       }
