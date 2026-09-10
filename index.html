@@ -42,7 +42,7 @@ const AI_FEATURES_ENABLED = true;
 // right, always visible) so it's possible to check at a glance whether
 // what's actually deployed matches what was just given, instead of
 // guessing from behavior alone.
-const APP_BUILD = "2026-09-10.4";
+const APP_BUILD = "2026-09-10.5";
 
 const T = {
   bg:"#FFFFFF", surface:"#FAFAFA", card:"#F4F4F4", border:"#E8E8E8",
@@ -3619,7 +3619,6 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
   // Cleared on project switch since a copied range from one script has no
   // meaning in another.
   const [lastCopiedRange,setLastCopiedRange]=useState(null);
-  useEffect(()=>{setLastCopiedRange(null);},[active?.id]);
   const TEXT_SCALES={normal:1,medium:1.15,large:1.3};
   const [textScale,setTextScale]=useState(()=>LS.get("sf_text_scale","normal"));
   const [textScaleMenuOpen,setTextScaleMenuOpen]=useState(false);
@@ -3632,6 +3631,12 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
   const [userMenuOpen,setUserMenuOpen]=useState(false);
 
   const active=projects.find(p=>p.id===activeId)||projects[0]||null;
+  // Bug fix: this was originally placed right after lastCopiedRange's own
+  // declaration, above — but that's before `active` (declared just below)
+  // actually exists yet. Referencing a const before its declaration line
+  // throws a ReferenceError on every render, which is exactly why opening
+  // any project produced a blank page. Moved to after active is declared.
+  useEffect(()=>{setLastCopiedRange(null);},[active?.id]);
 
   const mountedRef=useRef(false);
   useEffect(()=>{
