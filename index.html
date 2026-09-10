@@ -42,7 +42,7 @@ const AI_FEATURES_ENABLED = true;
 // right, always visible) so it's possible to check at a glance whether
 // what's actually deployed matches what was just given, instead of
 // guessing from behavior alone.
-const APP_BUILD = "2026-09-10.8";
+const APP_BUILD = "2026-09-10.9";
 
 const T = {
   bg:"#FFFFFF", surface:"#FAFAFA", card:"#F4F4F4", border:"#E8E8E8",
@@ -1746,6 +1746,8 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
 // ─── AI PANEL ─────────────────────────────────────────────────────────────────
 function AIPanel({project,cast,onClose,onGoToProfile,lastCopiedRange,onReplaceRange,onApplySpeakers}){
   const [mode,setMode]=useState("write");
+  const [modeMenuOpen,setModeMenuOpen]=useState(false);
+  const MODE_LABELS={write:"Write",correct:"Corrections",voice:"Character Voice",convert:"Convert",speakers:"Speakers"};
   const [prompt,setPrompt]=useState("");
   const [response,setResponse]=useState("");
   const [loading,setLoading]=useState(false);
@@ -1916,10 +1918,18 @@ RULES — DO NOT BREAK THESE:
           <button onClick={onGoToProfile} style={{padding:"7px 12px",borderRadius:4,background:"#000",color:"#FFF",border:"none",cursor:"pointer",fontFamily:"inherit",fontWeight:700,fontSize:11.5}}>Add API key</button>
         </div>
       )}
-      <div style={{display:"flex",borderBottom:"1px solid #E8E8E8"}}>
-        {[["write","Write"],["correct","Corrections"],["voice","Character Voice"],["convert","Convert"],["speakers","Speakers"]].map(([id,lbl])=>(
-          <button key={id} onClick={()=>setMode(id)} style={{flex:1,padding:"10px 4px",background:"none",border:"none",borderBottom:`2px solid ${mode===id?"#000":"transparent"}`,color:mode===id?"#000":"#AAA",cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase"}}>{lbl}</button>
-        ))}
+      <div style={{padding:"12px 20px",borderBottom:"1px solid #E8E8E8",position:"relative"}}>
+        <button onClick={()=>setModeMenuOpen(o=>!o)} style={{width:"100%",padding:"9px 12px",borderRadius:4,border:`1px solid ${modeMenuOpen?"#000":"#D0D0D0"}`,background:modeMenuOpen?"#000":"#FAFAFA",color:modeMenuOpen?"#FFF":"#333",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <span>{MODE_LABELS[mode]}</span><span>▾</span>
+        </button>
+        {modeMenuOpen&&<div onClick={()=>setModeMenuOpen(false)} style={{position:"fixed",inset:0,zIndex:600}}/>}
+        {modeMenuOpen&&(
+          <div style={{position:"absolute",top:"100%",left:20,right:20,marginTop:4,background:"#FFF",border:"1px solid #E0E0E0",borderRadius:6,boxShadow:"0 4px 16px rgba(0,0,0,0.1)",zIndex:601,overflow:"hidden"}}>
+            {[["write","Write"],["correct","Corrections"],["voice","Character Voice"],["convert","Convert"],["speakers","Speakers"]].map(([id,lbl])=>(
+              <button key={id} onClick={()=>{setMode(id);setModeMenuOpen(false);}} style={{display:"block",width:"100%",padding:"10px 14px",background:mode===id?"#F5F5F5":"none",border:"none",borderBottom:"1px solid #F0F0F0",cursor:"pointer",textAlign:"left",fontFamily:"inherit",fontSize:12.5,fontWeight:mode===id?700:400,color:"#333"}}>{lbl}</button>
+            ))}
+          </div>
+        )}
       </div>
       <div style={{flex:1,overflowY:"auto",padding:20,display:"flex",flexDirection:"column",gap:16}}>
         {mode==="write"&&(<>
