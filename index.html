@@ -42,7 +42,7 @@ const AI_FEATURES_ENABLED = true;
 // right, always visible) so it's possible to check at a glance whether
 // what's actually deployed matches what was just given, instead of
 // guessing from behavior alone.
-const APP_BUILD = "2026-09-10.5";
+const APP_BUILD = "2026-09-10.6";
 
 const T = {
   bg:"#FFFFFF", surface:"#FAFAFA", card:"#F4F4F4", border:"#E8E8E8",
@@ -730,15 +730,27 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
   };
 
   const applySnapshot=(snapshot)=>{
-    setLines(snapshot.lines);
+    // Bug fix: this used to pass snapshot.lines straight into setLines —
+    // the exact same array (and the exact same line objects) still sitting
+    // in history.current. That means the live script and a stored piece of
+    // undo history could end up pointing at literally the same data in
+    // memory. Any later code that ever mutated a line in place, rather
+    // than replacing it, would silently corrupt what undo/redo thinks
+    // happened at that point in history — invisible until undone much
+    // later, and then looking like content duplicating or reverting to
+    // the wrong thing for no visible reason. Copying fresh objects here
+    // guarantees the live state and every stored snapshot are always
+    // fully independent.
+    const freshLines=snapshot.lines.map(l=>({...l}));
+    setLines(freshLines);
     textCache.current={...snapshot.texts};
-    snapshot.lines.forEach((l,i)=>{
+    freshLines.forEach((l,i)=>{
       const el=refs.current[i];
       if(el){el.value=snapshot.texts[i]??"";autoGrow(el);}
     });
-    Object.keys(refs.current).forEach(k=>{if(Number(k)>=snapshot.lines.length) delete refs.current[k];});
-    pageMapRef.current=computePageMap(snapshot.lines);
-    onUpdateContent(snapshot.lines.map((l,i)=>({...l,text:snapshot.texts[i]??l.text})));
+    Object.keys(refs.current).forEach(k=>{if(Number(k)>=freshLines.length) delete refs.current[k];});
+    pageMapRef.current=computePageMap(freshLines);
+    onUpdateContent(freshLines.map((l,i)=>({...l,text:snapshot.texts[i]??l.text})));
   };
 
   const doUndo=()=>{
