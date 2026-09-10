@@ -42,7 +42,7 @@ const AI_FEATURES_ENABLED = true;
 // right, always visible) so it's possible to check at a glance whether
 // what's actually deployed matches what was just given, instead of
 // guessing from behavior alone.
-const APP_BUILD = "2026-09-10.1";
+const APP_BUILD = "2026-09-10.2";
 
 const T = {
   bg:"#FFFFFF", surface:"#FAFAFA", card:"#F4F4F4", border:"#E8E8E8",
@@ -1038,21 +1038,28 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
     pillTimerRef.current=setTimeout(()=>setPillVisible(false),1800);
   };
 
-  const focusLine=(idx,atEnd=true)=>{
+  const focusLine=(idx,atEnd=true,attempt=0)=>{
     // Bug fix: setTimeout(fn,0) only waits one tick — it doesn't actually
     // guarantee the browser has finished rendering React's update to the
     // DOM by the time it fires, so refs.current[idx] could still be
     // pointing at nothing (or the wrong node) for a just-inserted line,
     // silently failing to move focus there at all. requestAnimationFrame
-    // guarantees the DOM has caught up first — this is the same pattern
-    // already used successfully elsewhere in this file (the scene-jump
-    // mechanism) for exactly this class of "focus a line right after it's
-    // created/scrolled into view" problem.
+    // is more reliable but still isn't a hard guarantee on its own — this
+    // now retries for a few frames if the element isn't there yet, and
+    // explicitly verifies the focus actually landed afterward (some
+    // browsers can silently reject focus() on an element that isn't fully
+    // laid out yet), retrying again if it didn't, instead of a single
+    // unverified attempt that just gives up.
     requestAnimationFrame(()=>{
       const el=refs.current[idx];
-      if(!el) return;
+      if(!el){
+        if(attempt<5) focusLine(idx,atEnd,attempt+1);
+        return;
+      }
       el.focus();
-      if(atEnd){const len=el.value.length;el.setSelectionRange(len,len);}
+      const len=el.value.length;
+      el.setSelectionRange(atEnd?len:0,atEnd?len:0);
+      if(document.activeElement!==el&&attempt<5) focusLine(idx,atEnd,attempt+1);
     });
   };
 
