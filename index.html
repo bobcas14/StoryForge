@@ -42,7 +42,7 @@ const AI_FEATURES_ENABLED = true;
 // right, always visible) so it's possible to check at a glance whether
 // what's actually deployed matches what was just given, instead of
 // guessing from behavior alone.
-const APP_BUILD = "2026-09-10.7";
+const APP_BUILD = "2026-09-10.8";
 
 const T = {
   bg:"#FFFFFF", surface:"#FAFAFA", card:"#F4F4F4", border:"#E8E8E8",
@@ -595,7 +595,7 @@ function LineVoiceControl({audio,onRecorded,onDelete,dark}){
   );
 }
 
-function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageChange,focusMode,scrollRef,darkCanvas,onCharFocus,profile,onEditTitlePage,onForceSave,flushRef,undoRedoRef,freePages,onUpdateFreePages,rulerOpen,onRangeCopied,replaceRangeRef}){
+function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageChange,focusMode,scrollRef,darkCanvas,onCharFocus,profile,onEditTitlePage,onForceSave,flushRef,undoRedoRef,freePages,onUpdateFreePages,rulerOpen,onRangeCopied,replaceRangeRef,applySpeakersRef}){
   const [lines,setLines]=useState(()=>
     project?.lines?.length?project.lines:[{id:Date.now(),text:"",mode:"action"}]
   );
@@ -820,6 +820,28 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
       });
     };
     return()=>{if(replaceRangeRef) replaceRangeRef.current=null;};
+  });
+
+  // Tags a speaker onto lines within a range — never touches .text or
+  // .mode, only adds/updates .speaker, the same way mode itself is
+  // already invisible metadata that doesn't print anywhere on export.
+  useEffect(()=>{
+    if(!applySpeakersRef) return;
+    applySpeakersRef.current=(start,end,speakerMap)=>{
+      setLines(prev=>{
+        const next=prev.map((l,i)=>{
+          if(i>=start&&i<=end&&speakerMap[i-start]!==undefined){
+            return {...l,speaker:speakerMap[i-start]};
+          }
+          return l;
+        });
+        captureSnapshot(next,{...textCache.current});
+        lastSnapshotTimeRef.current=Date.now();
+        onUpdateContent(next);
+        return next;
+      });
+    };
+    return()=>{if(applySpeakersRef) applySpeakersRef.current=null;};
   });
 
   // Bug fix: Cmd+Z/Cmd+Shift+Z used to be handled in two separate places
@@ -1722,7 +1744,7 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
 }
 
 // ─── AI PANEL ─────────────────────────────────────────────────────────────────
-function AIPanel({project,cast,onClose,onGoToProfile,lastCopiedRange,onReplaceRange}){
+function AIPanel({project,cast,onClose,onGoToProfile,lastCopiedRange,onReplaceRange,onApplySpeakers}){
   const [mode,setMode]=useState("write");
   const [prompt,setPrompt]=useState("");
   const [response,setResponse]=useState("");
@@ -1837,6 +1859,50 @@ its own line rather than folded into prose?`;
       onReplaceRange(lastCopiedRange.start,lastCopiedRange.end,response);
     }
   };
+  // Identifies who's speaking each line of dialogue in prose (novel format
+  // has no character-cue line the way a screenplay does, so there's
+  // nothing today telling the app who said what). This never touches your
+  // actual text — Apply below only tags data behind the scenes, the same
+  // way mode tags (dialogue/action/etc) already work invisibly.
+  const SPEAKERS_SYSTEM_PROMPT=`You are a dialogue-speaker identifier for prose fiction. Your ONLY job is
+to figure out, for each line of dialogue in the passage below, which
+character is actually speaking it — using narration, who was just
+addressed, pronouns, and the natural flow of the conversation, the same
+way a careful reader would.
+RULES — DO NOT BREAK THESE:
+1. Never change, reword, add to, or remove any of the original text.
+   Return every line EXACTLY as given, character for character.
+2. Return the SAME NUMBER OF LINES, IN THE SAME ORDER, as the input —
+   exactly one output line per input line. Never merge two input lines
+   into one, or split one input line into two.
+3. For a line that is dialogue (in quotation marks), prefix it with the
+   speaker's name in brackets, like this: [Elix] "The exact original line."
+4. For a line that is NOT dialogue (narration/action), return it completely
+   unchanged, with no bracket tag at all.
+5. If you genuinely cannot tell who is speaking a line, write [Unclear]
+   rather than guessing.
+6. Do not invent a character who isn't actually named or clearly implied
+   somewhere in the passage.`;
+  const [speakersInput,setSpeakersInput]=useState("");
+  const doIdentifySpeakers=()=>{
+    if(!speakersInput.trim()) return;
+    run(SPEAKERS_SYSTEM_PROMPT,speakersInput,4096);
+  };
+  const doApplySpeakers=()=>{
+    if(!(response&&lastCopiedRange&&onApplySpeakers)) return;
+    const responseLines=response.split("\n").filter(l=>l.trim().length>0);
+    const originalLines=(project?.lines||[]).slice(lastCopiedRange.start,lastCopiedRange.end+1);
+    if(responseLines.length!==originalLines.length){
+      alert(`Couldn't apply — expected ${originalLines.length} line${originalLines.length===1?"":"s"} back but got ${responseLines.length}. The AI's response didn't line up 1:1 with what was copied, so nothing was changed. Try again, or copy a shorter passage.`);
+      return;
+    }
+    const speakerMap={};
+    responseLines.forEach((rl,i)=>{
+      const m=rl.match(/^\[([^\]]+)\]\s*(.*)$/);
+      if(m&&m[1].trim()!=="Unclear") speakerMap[i]=m[1].trim();
+    });
+    onApplySpeakers(lastCopiedRange.start,lastCopiedRange.end,speakerMap);
+  };
   return(
     <div style={{position:"fixed",right:0,top:0,bottom:0,width:340,background:"#FFF",borderLeft:"1px solid #E8E8E8",display:"flex",flexDirection:"column",zIndex:500,boxShadow:"-4px 0 20px rgba(0,0,0,0.06)"}}>
       <div style={{padding:"16px 20px",borderBottom:"1px solid #E8E8E8",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
@@ -1851,7 +1917,7 @@ its own line rather than folded into prose?`;
         </div>
       )}
       <div style={{display:"flex",borderBottom:"1px solid #E8E8E8"}}>
-        {[["write","Write"],["correct","Corrections"],["voice","Character Voice"],["convert","Convert"]].map(([id,lbl])=>(
+        {[["write","Write"],["correct","Corrections"],["voice","Character Voice"],["convert","Convert"],["speakers","Speakers"]].map(([id,lbl])=>(
           <button key={id} onClick={()=>setMode(id)} style={{flex:1,padding:"10px 4px",background:"none",border:"none",borderBottom:`2px solid ${mode===id?"#000":"transparent"}`,color:mode===id?"#000":"#AAA",cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase"}}>{lbl}</button>
         ))}
       </div>
@@ -1913,6 +1979,21 @@ its own line rather than folded into prose?`;
             <button onClick={doConvert} disabled={loading||!convertInput.trim()} style={{marginTop:8,width:"100%",padding:"10px",borderRadius:4,background:"#000",color:"#FFF",border:"none",cursor:loading?"wait":"pointer",fontFamily:"inherit",fontWeight:700,fontSize:13,opacity:loading||!convertInput.trim()?0.4:1}}>{loading?"Converting...":"Convert to Prose"}</button>
           </div>
         )}
+        {mode==="speakers"&&(
+          <div>
+            <label style={css.label}>Who's speaking? (novel-format dialogue)</label>
+            <p style={{margin:"0 0 12px",fontSize:11.5,color:"#AAA",lineHeight:1.6}}>Novel-format dialogue has no character-cue line the way a screenplay does, so nothing today tracks who said what. This reads the passage for context (narration, who was just addressed, natural conversation flow) and figures out the speaker for each line — but it never touches your actual prose. Apply below only tags that information behind the scenes, invisibly, the same way mode tags already work; nothing gets added to your manuscript text, and nothing shows up when you export.</p>
+            <textarea value={speakersInput} onChange={e=>setSpeakersInput(e.target.value)} onKeyDown={e=>{
+              if((e.metaKey||e.ctrlKey)&&e.key==="Enter"){
+                e.preventDefault();
+                if(response&&lastCopiedRange&&onApplySpeakers) doApplySpeakers();
+                else if(!loading) doIdentifySpeakers();
+              }
+            }} placeholder={`I look at my partner. His hand grips his sword as he nervously calls my name.\n\n"Elix."\n\n"Yes," I say back to my fellow warrior of light.`} style={{...css.input,resize:"vertical",minHeight:140,lineHeight:1.6,fontSize:12,fontFamily:"'Courier New',monospace"}}/>
+            <p style={{margin:"4px 0 0",fontSize:10,color:"#CCC"}}>⌘↵ to identify{response&&lastCopiedRange&&onApplySpeakers?" · ⌘↵ again to apply tags":""}</p>
+            <button onClick={doIdentifySpeakers} disabled={loading||!speakersInput.trim()} style={{marginTop:8,width:"100%",padding:"10px",borderRadius:4,background:"#000",color:"#FFF",border:"none",cursor:loading?"wait":"pointer",fontFamily:"inherit",fontWeight:700,fontSize:13,opacity:loading||!speakersInput.trim()?0.4:1}}>{loading?"Reading...":"Identify Speakers"}</button>
+          </div>
+        )}
         {(response||loading)&&(
           <div style={{borderTop:"1px solid #EBEBEB",paddingTop:16}}>
             <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
@@ -1921,6 +2002,9 @@ its own line rather than folded into prose?`;
                 {response&&<button onClick={()=>navigator.clipboard?.writeText(response)} style={{background:"none",border:"none",color:"#AAA",cursor:"pointer",fontSize:12}}>Copy</button>}
                 {mode==="convert"&&response&&lastCopiedRange&&onReplaceRange&&(
                   <button onClick={doReplaceInScript} title="⌘↵" style={{background:"none",border:"none",color:"#000",fontWeight:700,cursor:"pointer",fontSize:12}}>Replace in Script</button>
+                )}
+                {mode==="speakers"&&response&&lastCopiedRange&&onApplySpeakers&&(
+                  <button onClick={doApplySpeakers} title="⌘↵" style={{background:"none",border:"none",color:"#000",fontWeight:700,cursor:"pointer",fontSize:12}}>Apply Speaker Tags</button>
                 )}
                 {response&&<button onClick={()=>{setResponse("");setPrompt("");}} style={{background:"none",border:"none",color:"#AAA",cursor:"pointer",fontSize:12}}>Clear</button>}
               </div>
@@ -1984,6 +2068,9 @@ function CastPanel({cast,lines,sceneActs,onUpdate,onAdd,onDelete,onClose,onJumpT
           }
           results.push({idx,character:line.text.trim(),scene:sceneText,sceneNum,act:sceneActs?.[sceneIdx]||"",page:Math.floor(idx/55)+1,text:dlines.join(" ")});
         }
+      }
+      if(line.mode==="dialogue"&&line.speaker&&line.text?.trim()&&targetNames.includes(line.speaker.trim().toUpperCase())){
+        results.push({idx,character:line.speaker.trim(),scene:sceneText,sceneNum,act:sceneActs?.[sceneIdx]||"",page:Math.floor(idx/55)+1,text:line.text.trim()});
       }
     });
     return results;
@@ -3713,6 +3800,13 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
     replaceRangeRef.current?.(start,end,text);
     setLastCopiedRange(null);
   };
+  // Tags lines with a speaker without ever touching their text — same
+  // ref-routing reasoning as replaceRangeWithText above, so the open
+  // editor reflects it immediately instead of only the saved project data.
+  const applySpeakersToRange=(start,end,speakerMap)=>{
+    applySpeakersRef.current?.(start,end,speakerMap);
+    setLastCopiedRange(null);
+  };
   const updateNotes=(notes)=>{if(active)updateProject(active.id,{notes});};
   const addCharacter=(char)=>{if(!active)return;const exists=active.cast?.some(c=>c.name.toUpperCase()===char.name.toUpperCase());if(!exists)updateProject(active.id,{cast:[...(active.cast||[]),char]});};
   const updateCharacter=(charId,field,val)=>{if(!active)return;updateProject(active.id,{cast:active.cast.map(c=>c.id===charId?{...c,[field]:val}:c)});};
@@ -3738,6 +3832,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
   const flushRef=useRef(null);
   const undoRedoRef=useRef(null);
   const replaceRangeRef=useRef(null);
+  const applySpeakersRef=useRef(null);
   // Bypasses React state entirely — writes straight to localStorage via the
   // same onSaveProject Root already uses, so it still works even if this
   // runs during a 'beforeunload' teardown where scheduled state updates
@@ -3767,7 +3862,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
             </div>
           </div>
           <div style={{flex:1,overflow:"hidden"}}>
-            {active&&<SmartEditor project={active} cast={cast} onUpdateContent={updateLines} onAddCharacter={addCharacter} format={active.format} onPageChange={(cur,total)=>setPageInfo({cur,total})} focusMode={true} scrollRef={sceneNavRef} profile={profile} onEditTitlePage={()=>setTitlePageEditorOpen(true)} onForceSave={forceSaveNow} flushRef={flushRef} undoRedoRef={undoRedoRef} freePages={active.freePages} onUpdateFreePages={updateFreePages} rulerOpen={rulerOpen} onRangeCopied={setLastCopiedRange} replaceRangeRef={replaceRangeRef}/>}
+            {active&&<SmartEditor project={active} cast={cast} onUpdateContent={updateLines} onAddCharacter={addCharacter} format={active.format} onPageChange={(cur,total)=>setPageInfo({cur,total})} focusMode={true} scrollRef={sceneNavRef} profile={profile} onEditTitlePage={()=>setTitlePageEditorOpen(true)} onForceSave={forceSaveNow} flushRef={flushRef} undoRedoRef={undoRedoRef} freePages={active.freePages} onUpdateFreePages={updateFreePages} rulerOpen={rulerOpen} onRangeCopied={setLastCopiedRange} replaceRangeRef={replaceRangeRef} applySpeakersRef={applySpeakersRef}/>}
           </div>
         </div>
       )}
@@ -3956,7 +4051,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
           {nav==="write"&&(
             active?(
               <div style={{display:((beatsOpen&&beatsExpanded)||(moodOpen&&moodExpanded))?"none":"flex",flex:1,minWidth:0}}>
-                <SmartEditor project={active} cast={cast} onUpdateContent={updateLines} onAddCharacter={addCharacter} format={active.format} onPageChange={(cur,total)=>setPageInfo({cur,total})} focusMode={focusMode} scrollRef={sceneNavRef} darkCanvas={darkCanvas} onCharFocus={setCurrentCharName} key={active?.id} profile={profile} onEditTitlePage={()=>setTitlePageEditorOpen(true)} onForceSave={forceSaveNow} flushRef={flushRef} undoRedoRef={undoRedoRef} freePages={active.freePages} onUpdateFreePages={updateFreePages} rulerOpen={rulerOpen} onRangeCopied={setLastCopiedRange} replaceRangeRef={replaceRangeRef}/>
+                <SmartEditor project={active} cast={cast} onUpdateContent={updateLines} onAddCharacter={addCharacter} format={active.format} onPageChange={(cur,total)=>setPageInfo({cur,total})} focusMode={focusMode} scrollRef={sceneNavRef} darkCanvas={darkCanvas} onCharFocus={setCurrentCharName} key={active?.id} profile={profile} onEditTitlePage={()=>setTitlePageEditorOpen(true)} onForceSave={forceSaveNow} flushRef={flushRef} undoRedoRef={undoRedoRef} freePages={active.freePages} onUpdateFreePages={updateFreePages} rulerOpen={rulerOpen} onRangeCopied={setLastCopiedRange} replaceRangeRef={replaceRangeRef} applySpeakersRef={applySpeakersRef}/>
               </div>
             ):(
               <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16}}>
@@ -4028,7 +4123,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
 
         {importOpen&&<ImportModal profile={profile} onImport={importScript} onClose={()=>setImportOpen(false)}/>}
         {exportOpen&&active&&<ExportModal project={active} cast={cast} onClose={()=>setExportOpen(false)}/>}
-        {AI_FEATURES_ENABLED&&aiOpen&&active&&<AIPanel project={active} cast={cast} onClose={()=>setAiOpen(false)} onGoToProfile={()=>{setNav("profile");setAiOpen(false);}} lastCopiedRange={lastCopiedRange} onReplaceRange={replaceRangeWithText}/>}
+        {AI_FEATURES_ENABLED&&aiOpen&&active&&<AIPanel project={active} cast={cast} onClose={()=>setAiOpen(false)} onGoToProfile={()=>{setNav("profile");setAiOpen(false);}} lastCopiedRange={lastCopiedRange} onReplaceRange={replaceRangeWithText} onApplySpeakers={applySpeakersToRange}/>}
         {titlePageEditorOpen&&active&&(
           <TitlePageEditor project={active} profile={profile}
             onSave={(form)=>{
