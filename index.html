@@ -42,7 +42,7 @@ const AI_FEATURES_ENABLED = true;
 // right, always visible) so it's possible to check at a glance whether
 // what's actually deployed matches what was just given, instead of
 // guessing from behavior alone.
-const APP_BUILD = "2026-09-10.6";
+const APP_BUILD = "2026-09-10.7";
 
 const T = {
   bg:"#FFFFFF", surface:"#FAFAFA", card:"#F4F4F4", border:"#E8E8E8",
@@ -599,6 +599,16 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
   const [lines,setLines]=useState(()=>
     project?.lines?.length?project.lines:[{id:Date.now(),text:"",mode:"action"}]
   );
+  // Bumped on every undo/redo (see applySnapshot) so every line's key
+  // changes and React remounts them all fresh, picking up the restored
+  // text via defaultValue. Replaces a previous approach that manually
+  // wrote into refs.current[i] by array index — which broke whenever a
+  // snapshot had a different line count than what's currently on screen
+  // (e.g. undoing a Replace that had merged 3 lines into 1): the indices
+  // no longer lined up with the same lines, so restored text got written
+  // into the wrong, still-mounted elements. Forcing a real remount sidesteps
+  // index alignment entirely.
+  const [historyVersion,setHistoryVersion]=useState(0);
   const [curLine,setCurLine]=useState(0);
   const [pillVisible,setPillVisible]=useState(false);
   const [pillPos,setPillPos]=useState({x:0,y:0});
@@ -730,24 +740,29 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
   };
 
   const applySnapshot=(snapshot)=>{
-    // Bug fix: this used to pass snapshot.lines straight into setLines —
-    // the exact same array (and the exact same line objects) still sitting
-    // in history.current. That means the live script and a stored piece of
-    // undo history could end up pointing at literally the same data in
-    // memory. Any later code that ever mutated a line in place, rather
-    // than replacing it, would silently corrupt what undo/redo thinks
-    // happened at that point in history — invisible until undone much
-    // later, and then looking like content duplicating or reverting to
-    // the wrong thing for no visible reason. Copying fresh objects here
+    // Bug fix (data sharing): this used to pass snapshot.lines straight
+    // into setLines — the exact same array (and the exact same line
+    // objects) still sitting in history.current. That means the live
+    // script and a stored piece of undo history could end up pointing at
+    // literally the same data in memory. Copying fresh objects here
     // guarantees the live state and every stored snapshot are always
     // fully independent.
     const freshLines=snapshot.lines.map(l=>({...l}));
     setLines(freshLines);
     textCache.current={...snapshot.texts};
-    freshLines.forEach((l,i)=>{
-      const el=refs.current[i];
-      if(el){el.value=snapshot.texts[i]??"";autoGrow(el);}
-    });
+    // Bug fix (wrong-element writes): this used to also manually write
+    // into refs.current[i] by array INDEX to sync each textarea's value.
+    // That broke whenever the snapshot being restored had a different
+    // number of lines than what's currently on screen — e.g. undoing a
+    // Replace that had merged 3 lines into 1. refs.current[i] still
+    // pointed at whatever DOM element was CURRENTLY at that index (from
+    // before the undo), not the line that belongs there after it — so
+    // restored text got written into the wrong, still-mounted elements,
+    // creating duplicated and vanished-looking lines once React's own
+    // reconciliation ran afterward. Bumping historyVersion forces every
+    // line to remount with a fresh key, picking up the correct text via
+    // defaultValue with no index alignment to get wrong.
+    setHistoryVersion(v=>v+1);
     Object.keys(refs.current).forEach(k=>{if(Number(k)>=freshLines.length) delete refs.current[k];});
     pageMapRef.current=computePageMap(freshLines);
     onUpdateContent(freshLines.map((l,i)=>({...l,text:snapshot.texts[i]??l.text})));
@@ -1512,7 +1527,7 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
             const isBreakBefore=pageMap.breakSet.has(idx);
             const pageNum=pageMap.lineToPage[idx]||1;
             return(
-              <div key={line.id}>
+              <div key={`${line.id}_${historyVersion}`}>
                 {isBreakBefore&&<PageBreakDivider pageNum={pageNum} title={project?.title} format={format} dark={darkCanvas}/>}
                 <div className="sf-line-outer" style={{position:"relative"}}>
                   {line.notes?.length>0&&(
