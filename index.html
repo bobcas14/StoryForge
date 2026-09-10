@@ -42,7 +42,7 @@ const AI_FEATURES_ENABLED = true;
 // right, always visible) so it's possible to check at a glance whether
 // what's actually deployed matches what was just given, instead of
 // guessing from behavior alone.
-const APP_BUILD = "2026-09-10.9";
+const APP_BUILD = "2026-09-10.10";
 
 const T = {
   bg:"#FFFFFF", surface:"#FAFAFA", card:"#F4F4F4", border:"#E8E8E8",
@@ -822,22 +822,43 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
     return()=>{if(replaceRangeRef) replaceRangeRef.current=null;};
   });
 
-  // Tags a speaker onto lines within a range — never touches .text or
-  // .mode, only adds/updates .speaker, the same way mode itself is
-  // already invisible metadata that doesn't print anywhere on export.
+  // Adds the speaker's name directly into each identified line of
+  // dialogue — e.g. "Yes," I say back... becomes Elix: "Yes," I say
+  // back... This is a real text change (unlike a mode tag), so it
+  // captures its own undo snapshot the same as any other edit.
   useEffect(()=>{
     if(!applySpeakersRef) return;
     applySpeakersRef.current=(start,end,speakerMap)=>{
       setLines(prev=>{
+        const newCache={...textCache.current};
         const next=prev.map((l,i)=>{
           if(i>=start&&i<=end&&speakerMap[i-start]!==undefined){
-            return {...l,speaker:speakerMap[i-start]};
+            const newText=`${speakerMap[i-start]}: ${l.text}`;
+            newCache[i]=newText;
+            return {...l,text:newText,speaker:speakerMap[i-start]};
           }
           return l;
         });
-        captureSnapshot(next,{...textCache.current});
+        textCache.current=newCache;
+        // Bug fix (same class as applySnapshot): rewriting .text on a line
+        // that keeps the same id/key means React won't remount it, and an
+        // uncontrolled textarea's defaultValue is ignored on an element
+        // that's already mounted — so the new text wouldn't actually show
+        // on screen without this. Writing directly to the DOM here is safe
+        // specifically because no lines are being inserted/removed, only
+        // existing ones' text is changing — the index-to-line mapping
+        // stays valid, unlike the Replace-then-undo case that needed the
+        // full remount approach instead.
+        next.forEach((l,i)=>{
+          if(i>=start&&i<=end&&speakerMap[i-start]!==undefined){
+            const el=refs.current[i];
+            if(el){el.value=newCache[i];autoGrow(el);}
+          }
+        });
+        captureSnapshot(next,{...newCache});
         lastSnapshotTimeRef.current=Date.now();
         onUpdateContent(next);
+        pageMapRef.current=computePageMap(next);
         return next;
       });
     };
@@ -1903,7 +1924,11 @@ RULES — DO NOT BREAK THESE:
       const m=rl.match(/^\[([^\]]+)\]\s*(.*)$/);
       if(m&&m[1].trim()!=="Unclear") speakerMap[i]=m[1].trim();
     });
-    onApplySpeakers(lastCopiedRange.start,lastCopiedRange.end,speakerMap);
+    const count=Object.keys(speakerMap).length;
+    if(count===0){alert("No speakers were identified clearly enough to add.");return;}
+    if(window.confirm(`Add speaker names to ${count} line${count===1?"":"s"} of dialogue in your script? You can undo this with Ctrl/Cmd+Z.`)){
+      onApplySpeakers(lastCopiedRange.start,lastCopiedRange.end,speakerMap);
+    }
   };
   return(
     <div style={{position:"fixed",right:0,top:0,bottom:0,width:340,background:"#FFF",borderLeft:"1px solid #E8E8E8",display:"flex",flexDirection:"column",zIndex:500,boxShadow:"-4px 0 20px rgba(0,0,0,0.06)"}}>
@@ -1992,7 +2017,7 @@ RULES — DO NOT BREAK THESE:
         {mode==="speakers"&&(
           <div>
             <label style={css.label}>Who's speaking? (novel-format dialogue)</label>
-            <p style={{margin:"0 0 12px",fontSize:11.5,color:"#AAA",lineHeight:1.6}}>Novel-format dialogue has no character-cue line the way a screenplay does, so nothing today tracks who said what. This reads the passage for context (narration, who was just addressed, natural conversation flow) and figures out the speaker for each line — but it never touches your actual prose. Apply below only tags that information behind the scenes, invisibly, the same way mode tags already work; nothing gets added to your manuscript text, and nothing shows up when you export.</p>
+            <p style={{margin:"0 0 12px",fontSize:11.5,color:"#AAA",lineHeight:1.6}}>Novel-format dialogue has no character-cue line the way a screenplay does, so nothing today tracks who said what. This reads the passage for context (narration, who was just addressed, natural conversation flow) and figures out the speaker for each line. "Add Names to Script" writes the speaker's name directly into each dialogue line — e.g. "Elix," I say back to my fellow warrior of light. becomes Elix: "Yes," I say back to my fellow warrior of light. — so it does change your manuscript text, and it will show up when you export, unlike Convert's strict never-add-anything rule.</p>
             <textarea value={speakersInput} onChange={e=>setSpeakersInput(e.target.value)} onKeyDown={e=>{
               if((e.metaKey||e.ctrlKey)&&e.key==="Enter"){
                 e.preventDefault();
@@ -2000,7 +2025,7 @@ RULES — DO NOT BREAK THESE:
                 else if(!loading) doIdentifySpeakers();
               }
             }} placeholder={`I look at my partner. His hand grips his sword as he nervously calls my name.\n\n"Elix."\n\n"Yes," I say back to my fellow warrior of light.`} style={{...css.input,resize:"vertical",minHeight:140,lineHeight:1.6,fontSize:12,fontFamily:"'Courier New',monospace"}}/>
-            <p style={{margin:"4px 0 0",fontSize:10,color:"#CCC"}}>⌘↵ to identify{response&&lastCopiedRange&&onApplySpeakers?" · ⌘↵ again to apply tags":""}</p>
+            <p style={{margin:"4px 0 0",fontSize:10,color:"#CCC"}}>⌘↵ to identify{response&&lastCopiedRange&&onApplySpeakers?" · ⌘↵ again to add names to script":""}</p>
             <button onClick={doIdentifySpeakers} disabled={loading||!speakersInput.trim()} style={{marginTop:8,width:"100%",padding:"10px",borderRadius:4,background:"#000",color:"#FFF",border:"none",cursor:loading?"wait":"pointer",fontFamily:"inherit",fontWeight:700,fontSize:13,opacity:loading||!speakersInput.trim()?0.4:1}}>{loading?"Reading...":"Identify Speakers"}</button>
           </div>
         )}
@@ -2014,7 +2039,7 @@ RULES — DO NOT BREAK THESE:
                   <button onClick={doReplaceInScript} title="⌘↵" style={{background:"none",border:"none",color:"#000",fontWeight:700,cursor:"pointer",fontSize:12}}>Replace in Script</button>
                 )}
                 {mode==="speakers"&&response&&lastCopiedRange&&onApplySpeakers&&(
-                  <button onClick={doApplySpeakers} title="⌘↵" style={{background:"none",border:"none",color:"#000",fontWeight:700,cursor:"pointer",fontSize:12}}>Apply Speaker Tags</button>
+                  <button onClick={doApplySpeakers} title="⌘↵" style={{background:"none",border:"none",color:"#000",fontWeight:700,cursor:"pointer",fontSize:12}}>Add Names to Script</button>
                 )}
                 {response&&<button onClick={()=>{setResponse("");setPrompt("");}} style={{background:"none",border:"none",color:"#AAA",cursor:"pointer",fontSize:12}}>Clear</button>}
               </div>
