@@ -38,6 +38,11 @@
     const { useState, useEffect, useRef, useMemo, useCallback } = React;
 
 const AI_FEATURES_ENABLED = true;
+// Bumped every time a new file is shipped — shown in the footer (bottom
+// right, always visible) so it's possible to check at a glance whether
+// what's actually deployed matches what was just given, instead of
+// guessing from behavior alone.
+const APP_BUILD = "2026-09-10.1";
 
 const T = {
   bg:"#FFFFFF", surface:"#FAFAFA", card:"#F4F4F4", border:"#E8E8E8",
@@ -3963,6 +3968,7 @@ function App({profile,onEditProfile,onUpdateProfile,onHome,initialProject,initia
               )}
             </div>
           </div>
+          <span style={{marginLeft:10,fontSize:9,color:"#DDD"}} title="Build version — check this against what you were given if something seems out of date">v{APP_BUILD}</span>
         </div>
 
         {shortcutsOpen&&<ShortcutsOverlay onClose={()=>setShortcutsOpen(false)}/>}
