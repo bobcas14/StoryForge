@@ -42,7 +42,7 @@ const AI_FEATURES_ENABLED = true;
 // right, always visible) so it's possible to check at a glance whether
 // what's actually deployed matches what was just given, instead of
 // guessing from behavior alone.
-const APP_BUILD = "2026-09-10.11";
+const APP_BUILD = "2026-09-10.13";
 
 const T = {
   bg:"#FFFFFF", surface:"#FAFAFA", card:"#F4F4F4", border:"#E8E8E8",
@@ -250,13 +250,20 @@ function lineStyle(mode,format,dark){
   }
 }
 
-function wrapperStyle(mode,format){
+function wrapperStyle(mode,format,dark){
   const isScreen=format==="film"||format==="tv"||format==="stage";
   const isAnime=format==="anime"||format==="manga"||format==="animation";
   const isVO=format==="voiceover",isAudio=format==="audiobook",isNovel=format==="novel";
   switch(mode){
     case"dialogue":
-      if(isAudio||isNovel) return{marginLeft:0,marginRight:0};
+      // Faint, editor-only visual aid so dialogue is scannable at a glance
+      // while writing — action and dialogue otherwise render almost
+      // identically in novel format, which is correct for how a real
+      // printed book looks, but made it hard to tell them apart on
+      // screen. This never reaches export/print — those are built by
+      // buildPrintHtml separately and never call this function at all.
+      if(isNovel) return{marginLeft:0,marginRight:0,background:dark?"rgba(255,255,255,0.045)":"rgba(0,0,0,0.03)",borderRadius:3};
+      if(isAudio) return{marginLeft:0,marginRight:0};
       if(isScreen) return{marginLeft:"18%",marginRight:"16%"};
       if(isAnime||isVO) return{marginLeft:"12%",marginRight:"8%"};
       return{marginLeft:"10%",marginRight:"8%"};
@@ -700,6 +707,26 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
       requestAnimationFrame(()=>{
         ticking=false;
         const scrollTop=el.scrollTop;
+        // Bug fix: at the very bottom of a long document, the estimation
+        // below (28px per line for anything never actually rendered and
+        // measured yet) has accumulated its worst-case error — the vast
+        // majority of a 7,000+ line script is never in the render window
+        // at once, so this guess drifts further from reality the deeper
+        // into unmeasured territory it has to sum through. That's exactly
+        // why "scroll to the last page" specifically was landing on a
+        // window from much earlier in the document instead. When we can
+        // tell you've scrolled to (or within a page of) the real bottom
+        // of the scrollable area, skip the estimate entirely and jump
+        // straight to the actual last lines.
+        const atBottom=el.scrollHeight-scrollTop-el.clientHeight<300;
+        if(atBottom){
+          setRenderRange(prev=>{
+            const start=Math.max(0,lines.length-RENDER_WINDOW);
+            if(prev.start===start&&prev.end===lines.length) return prev;
+            return{start,end:lines.length};
+          });
+          return;
+        }
         let acc=0,estIdx=0;
         for(let i=0;i<lines.length;i++){
           acc+=lineHeights.current[i]||28;
@@ -1632,7 +1659,7 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
                       </div>
                     );
                   })()}
-                  <div ref={el=>{wrapperRefs.current[idx]=el;}} style={{position:"relative",...wrapperStyle(line.mode,format),...((selectAllActive||(rangeSelection&&idx>=rangeSelection.start&&idx<=rangeSelection.end))?{background:darkCanvas?"rgba(255,255,255,0.12)":"rgba(0,0,0,0.07)"}:{})}}>
+                  <div ref={el=>{wrapperRefs.current[idx]=el;}} style={{position:"relative",...wrapperStyle(line.mode,format,darkCanvas),...((selectAllActive||(rangeSelection&&idx>=rangeSelection.start&&idx<=rangeSelection.end))?{background:darkCanvas?"rgba(255,255,255,0.12)":"rgba(0,0,0,0.07)"}:{})}}>
                     <textarea
                       ref={el=>{refs.current[idx]=el;if(el) autoGrowOnMount(el,line.text);}}
                       defaultValue={line.text}
