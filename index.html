@@ -42,7 +42,7 @@ const AI_FEATURES_ENABLED = true;
 // right, always visible) so it's possible to check at a glance whether
 // what's actually deployed matches what was just given, instead of
 // guessing from behavior alone.
-const APP_BUILD = "2026-09-11.2";
+const APP_BUILD = "2026-09-11.3-debug";
 
 const T = {
   bg:"#FFFFFF", surface:"#FAFAFA", card:"#F4F4F4", border:"#E8E8E8",
@@ -678,6 +678,7 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
     }
     setRenderRange(prev=>{
       const needsRecenter=curLine<prev.start+RECENTER_BUFFER||curLine>prev.end-RECENTER_BUFFER||prev.end>lines.length;
+      console.log("[SF-DEBUG] curLine-based recenter",{curLine,prevStart:prev.start,prevEnd:prev.end,needsRecenter,linesLength:lines.length});
       if(!needsRecenter) return prev;
       const half=RENDER_WINDOW/2;
       const start=Math.max(0,Math.min(curLine-half,lines.length-RENDER_WINDOW));
@@ -738,9 +739,14 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
         // of the scrollable area, skip the estimate entirely and jump
         // straight to the actual last lines.
         const atBottom=el.scrollHeight-scrollTop-el.clientHeight<300;
+        // TEMPORARY DIAGNOSTIC LOGGING — remove once the virtualized-scroll
+        // glitch is actually found. Prints the real values driving this
+        // decision so they can be inspected directly instead of inferred.
+        console.log("[SF-DEBUG] scroll",{scrollTop,scrollHeight:el.scrollHeight,clientHeight:el.clientHeight,atBottom,linesLength:lines.length,avgHeight:avgMeasuredHeight(),measuredCount:Object.keys(lineHeights.current).length});
         if(atBottom){
           const start=Math.max(0,lines.length-RENDER_WINDOW);
           setRenderRange(prev=>{
+            console.log("[SF-DEBUG] atBottom branch",{prevStart:prev.start,prevEnd:prev.end,newStart:start,newEnd:lines.length});
             if(prev.start===start&&prev.end===lines.length) return prev;
             return{start,end:lines.length};
           });
@@ -769,8 +775,10 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
           acc+=lineHeights.current[i]||fallback;
           if(acc>=scrollTop){estIdx=i;break;}
         }
+        console.log("[SF-DEBUG] estimation branch",{scrollTop,estIdx,fallback,estimatedPage:Math.floor(estIdx/55)+1});
         setRenderRange(prev=>{
           const needsRecenter=estIdx<prev.start+RECENTER_BUFFER||estIdx>prev.end-RECENTER_BUFFER;
+          console.log("[SF-DEBUG] renderRange update",{prevStart:prev.start,prevEnd:prev.end,estIdx,needsRecenter});
           if(!needsRecenter) return prev;
           const half=RENDER_WINDOW/2;
           const start=Math.max(0,Math.min(estIdx-half,lines.length-RENDER_WINDOW));
