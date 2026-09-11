@@ -42,7 +42,7 @@ const AI_FEATURES_ENABLED = true;
 // right, always visible) so it's possible to check at a glance whether
 // what's actually deployed matches what was just given, instead of
 // guessing from behavior alone.
-const APP_BUILD = "2026-09-11.1";
+const APP_BUILD = "2026-09-11.2";
 
 const T = {
   bg:"#FFFFFF", surface:"#FAFAFA", card:"#F4F4F4", border:"#E8E8E8",
@@ -686,9 +686,28 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
     });
   },[curLine,lines.length]);
 
+  // Bug fix: a flat 28px-per-line fallback assumes roughly one visual
+  // line per entry — true often enough for short screenplay action/
+  // dialogue lines, but a novel-format paragraph commonly wraps across
+  // 3-4 visual lines at this font size and near-double spacing, making a
+  // flat estimate undershoot badly for exactly that content. That error
+  // compounds across every one of the thousands of lines never actually
+  // rendered and measured, which is why scrolling deep into a long novel
+  // could land far short of the true position — reporting a page number
+  // a fraction of the real one, in roughly the same proportion as the
+  // real average height exceeds the flat 28px guess. Computed once per
+  // call (never inside the summing loops below) so it stays cheap even
+  // across thousands of lines.
+  const avgMeasuredHeight=()=>{
+    const vals=Object.values(lineHeights.current).filter(h=>h>0);
+    if(vals.length===0) return 28;
+    return vals.reduce((a,b)=>a+b,0)/vals.length;
+  };
+
   const estimateHeightRange=(a,b)=>{
+    const fallback=avgMeasuredHeight();
     let sum=0;
-    for(let i=a;i<b;i++) sum+=lineHeights.current[i]||28;
+    for(let i=a;i<b;i++) sum+=lineHeights.current[i]||fallback;
     return sum;
   };
 
@@ -745,8 +764,9 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
           return;
         }
         let acc=0,estIdx=0;
+        const fallback=avgMeasuredHeight();
         for(let i=0;i<lines.length;i++){
-          acc+=lineHeights.current[i]||28;
+          acc+=lineHeights.current[i]||fallback;
           if(acc>=scrollTop){estIdx=i;break;}
         }
         setRenderRange(prev=>{
@@ -774,8 +794,9 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
   const computePageMap=useCallback((lns)=>{
     const breakSet=new Set(),lineToPage={};
     let acc=0,page=1;
+    const fallback=avgMeasuredHeight();
     for(let i=0;i<lns.length;i++){
-      const h=lineHeights.current[i]||28;
+      const h=lineHeights.current[i]||fallback;
       if(acc+h>PAGE_H&&acc>0){breakSet.add(i);acc=h;page++;}
       else acc+=h;
       lineToPage[i]=page;
