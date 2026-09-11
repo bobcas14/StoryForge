@@ -42,7 +42,7 @@ const AI_FEATURES_ENABLED = true;
 // right, always visible) so it's possible to check at a glance whether
 // what's actually deployed matches what was just given, instead of
 // guessing from behavior alone.
-const APP_BUILD = "2026-09-10.13";
+const APP_BUILD = "2026-09-10.14";
 
 const T = {
   bg:"#FFFFFF", surface:"#FAFAFA", card:"#F4F4F4", border:"#E8E8E8",
@@ -1344,10 +1344,17 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
         if((e.key==="ArrowDown"||e.key==="ArrowRight")&&atEnd&&idx<lines.length-1){
           e.preventDefault();
           setCurLine(idx+1);
-          setTimeout(()=>{
-            const nextEl=refs.current[idx+1];
-            if(nextEl){nextEl.focus();nextEl.setSelectionRange(0,0);}
-          },0);
+          // Bug fix: this used to have its own separate, inline version of
+          // "move focus to the next line" — a plain setTimeout(fn,0) with
+          // no retry and no verification that it actually worked. That's
+          // the exact same weak pattern already found and fixed once in
+          // focusLine() itself; this call site just never got that same
+          // fix, since it was a second, independent copy of similar logic
+          // rather than a shared function. Especially likely to fail right
+          // at a virtualized render-window boundary, where the next line
+          // may not be mounted in the DOM yet at all. Using the shared,
+          // already-hardened focusLine() here instead of duplicating it.
+          focusLine(idx+1,false);
           return;
         }
       }
