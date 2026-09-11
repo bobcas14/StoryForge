@@ -42,7 +42,7 @@ const AI_FEATURES_ENABLED = true;
 // right, always visible) so it's possible to check at a glance whether
 // what's actually deployed matches what was just given, instead of
 // guessing from behavior alone.
-const APP_BUILD = "2026-09-10.10";
+const APP_BUILD = "2026-09-10.11";
 
 const T = {
   bg:"#FFFFFF", surface:"#FAFAFA", card:"#F4F4F4", border:"#E8E8E8",
@@ -234,12 +234,19 @@ function lineStyle(mode,format,dark){
   const isAudio=format==="audiobook",isNovel=format==="novel";
   switch(mode){
     case"character":return{fontWeight:800,textTransform:"uppercase",textAlign:isAudio||isNovel?"left":"center",letterSpacing:"0.1em",fontSize:13,marginTop:16,color:dark?"#F0F0F0":"#000"};
-    case"dialogue":return{color:dark?"#D8D8D8":"#222",fontSize:isAudio||isNovel?14:13,lineHeight:isAudio||isNovel?2.0:1.85,fontStyle:"normal"};
+    case"dialogue":return{color:dark?"#D8D8D8":"#222",fontSize:isAudio||isNovel?14:13,lineHeight:isAudio||isNovel?2.0:1.85,fontStyle:"normal",textIndent:isNovel?"0.4in":0};
     case"direction":return{fontStyle:"italic",color:dark?"#999":"#666",fontSize:12,lineHeight:1.7};
     case"location":return{fontWeight:800,textTransform:"uppercase",letterSpacing:"0.08em",fontSize:12,marginTop:20,color:dark?"#F0F0F0":"#000"};
     case"note":return{fontStyle:"italic",color:dark?"#888":"#999",fontSize:12,lineHeight:1.7};
     case"chapter":return{fontWeight:800,textAlign:"center",fontSize:20,marginTop:48,marginBottom:12,color:dark?"#F5F5F5":"#000"};
-    default:return{color:dark?"#E0E0E0":"#111",fontSize:isAudio||isNovel?14:13,lineHeight:isAudio||isNovel?2.1:1.9};
+    // Bug fix (design gap, not a code error): novel format had NO paragraph
+    // indentation and no gap between paragraphs — nothing but line-height
+    // separated one block of narration from the next, with no visual cue
+    // for where a paragraph actually starts. First-line indent is the real
+    // manuscript-submission standard (not an invented app convention), so
+    // this uses that instead of adding blank-line gaps, which isn't the
+    // standard novel manuscripts actually use.
+    default:return{color:dark?"#E0E0E0":"#111",fontSize:isAudio||isNovel?14:13,lineHeight:isAudio||isNovel?2.1:1.9,textIndent:isNovel?"0.4in":0};
   }
 }
 
