@@ -42,7 +42,7 @@ const AI_FEATURES_ENABLED = true;
 // right, always visible) so it's possible to check at a glance whether
 // what's actually deployed matches what was just given, instead of
 // guessing from behavior alone.
-const APP_BUILD = "2026-09-10.14";
+const APP_BUILD = "2026-09-11.1";
 
 const T = {
   bg:"#FFFFFF", surface:"#FAFAFA", card:"#F4F4F4", border:"#E8E8E8",
@@ -720,11 +720,28 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
         // straight to the actual last lines.
         const atBottom=el.scrollHeight-scrollTop-el.clientHeight<300;
         if(atBottom){
+          const start=Math.max(0,lines.length-RENDER_WINDOW);
           setRenderRange(prev=>{
-            const start=Math.max(0,lines.length-RENDER_WINDOW);
             if(prev.start===start&&prev.end===lines.length) return prev;
             return{start,end:lines.length};
           });
+          // Bug fix: this effect and the curLine-based one above it both
+          // independently decide what's rendered — scrolling can shrink
+          // the render window down to exclude whatever line still has
+          // keyboard focus. An element removed from the page doesn't hand
+          // focus off to anything else; it just goes to nothing, silently,
+          // with no error. Every key press after that (arrow-down
+          // included) has nothing left to receive it and does nothing at
+          // all, which looks exactly like "stuck" until something is
+          // clicked to re-establish focus. Bringing curLine into the new
+          // window here, and physically refocusing it, keeps keyboard
+          // navigation from going dead the moment a scroll-triggered
+          // recenter happens to leave your cursor's line behind.
+          if(curLine<start||curLine>=lines.length){
+            const fallback=lines.length-1;
+            setCurLine(fallback);
+            focusLine(fallback,true);
+          }
           return;
         }
         let acc=0,estIdx=0;
@@ -738,13 +755,21 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
           const half=RENDER_WINDOW/2;
           const start=Math.max(0,Math.min(estIdx-half,lines.length-RENDER_WINDOW));
           const end=Math.min(lines.length,start+RENDER_WINDOW);
+          // Same fix as the atBottom case above — keep curLine (and actual
+          // keyboard focus) from being left behind outside whatever the
+          // new window turns out to be.
+          if(curLine<start||curLine>=end){
+            const fallback=Math.max(start,Math.min(curLine,end-1));
+            setCurLine(fallback);
+            focusLine(fallback,true);
+          }
           return{start:Math.max(0,start),end};
         });
       });
     };
     el.addEventListener("scroll",onScroll);
     return()=>el.removeEventListener("scroll",onScroll);
-  },[lines.length]);
+  },[lines.length,curLine]);
 
   const computePageMap=useCallback((lns)=>{
     const breakSet=new Set(),lineToPage={};
