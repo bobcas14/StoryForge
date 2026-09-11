@@ -42,7 +42,7 @@ const AI_FEATURES_ENABLED = true;
 // right, always visible) so it's possible to check at a glance whether
 // what's actually deployed matches what was just given, instead of
 // guessing from behavior alone.
-const APP_BUILD = "2026-09-11.3-debug";
+const APP_BUILD = "2026-09-11.4";
 
 const T = {
   bg:"#FFFFFF", surface:"#FAFAFA", card:"#F4F4F4", border:"#E8E8E8",
@@ -678,7 +678,6 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
     }
     setRenderRange(prev=>{
       const needsRecenter=curLine<prev.start+RECENTER_BUFFER||curLine>prev.end-RECENTER_BUFFER||prev.end>lines.length;
-      console.log("[SF-DEBUG] curLine-based recenter",{curLine,prevStart:prev.start,prevEnd:prev.end,needsRecenter,linesLength:lines.length});
       if(!needsRecenter) return prev;
       const half=RENDER_WINDOW/2;
       const start=Math.max(0,Math.min(curLine-half,lines.length-RENDER_WINDOW));
@@ -742,11 +741,9 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
         // TEMPORARY DIAGNOSTIC LOGGING — remove once the virtualized-scroll
         // glitch is actually found. Prints the real values driving this
         // decision so they can be inspected directly instead of inferred.
-        console.log("[SF-DEBUG] scroll",{scrollTop,scrollHeight:el.scrollHeight,clientHeight:el.clientHeight,atBottom,linesLength:lines.length,avgHeight:avgMeasuredHeight(),measuredCount:Object.keys(lineHeights.current).length});
         if(atBottom){
           const start=Math.max(0,lines.length-RENDER_WINDOW);
           setRenderRange(prev=>{
-            console.log("[SF-DEBUG] atBottom branch",{prevStart:prev.start,prevEnd:prev.end,newStart:start,newEnd:lines.length});
             if(prev.start===start&&prev.end===lines.length) return prev;
             return{start,end:lines.length};
           });
@@ -775,10 +772,27 @@ function SmartEditor({project,cast,onUpdateContent,onAddCharacter,format,onPageC
           acc+=lineHeights.current[i]||fallback;
           if(acc>=scrollTop){estIdx=i;break;}
         }
-        console.log("[SF-DEBUG] estimation branch",{scrollTop,estIdx,fallback,estimatedPage:Math.floor(estIdx/55)+1});
+        // Bug fix (the actual root cause, confirmed via diagnostic
+        // logging): the loop above sums (average line height) × (lines
+        // walked) to guess your scroll position. But the browser's real
+        // scrollHeight includes things this sum has no way to know about —
+        // headers, padding, and other elements sharing the scrollable
+        // area — so the loop's own total can end up smaller than the
+        // true scrollable height. Scroll far enough and the loop finishes
+        // every line without ever reaching scrollTop, silently leaving
+        // estIdx at its starting value of 0 — which is exactly what the
+        // logging showed: scrolled 97% of the way down, estIdx stuck at 0,
+        // render window frozen on the very first 500 lines the entire
+        // time, while the visible scroll position was legitimately far
+        // below any of that content. If the loop's own sum falls short,
+        // fall back to a direct proportion of the browser's own accurate
+        // scrollHeight/scrollTop instead of trusting the loop's total to
+        // line up with it.
+        if(acc<scrollTop&&el.scrollHeight>0){
+          estIdx=Math.floor((scrollTop/el.scrollHeight)*lines.length);
+        }
         setRenderRange(prev=>{
           const needsRecenter=estIdx<prev.start+RECENTER_BUFFER||estIdx>prev.end-RECENTER_BUFFER;
-          console.log("[SF-DEBUG] renderRange update",{prevStart:prev.start,prevEnd:prev.end,estIdx,needsRecenter});
           if(!needsRecenter) return prev;
           const half=RENDER_WINDOW/2;
           const start=Math.max(0,Math.min(estIdx-half,lines.length-RENDER_WINDOW));
